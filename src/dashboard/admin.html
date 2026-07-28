@@ -93,6 +93,8 @@
   .snip pre{background:#0a0f1d;color:#e2e8f0;border-radius:10px;padding:12px 14px;font:11.5px/1.6 var(--mono);white-space:pre-wrap;word-break:break-all}
   .snip .lbl{font:11px var(--mono);color:var(--dim)}
   .note{font:12px var(--mono);color:var(--faint);padding:8px 2px}
+  .userrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 14px;border-radius:11px;background:var(--inner);border:1px solid var(--line);margin-bottom:8px;font:12.5px var(--mono)}
+  .userrow .em{color:var(--ink)} .userrow .orgs{color:var(--faint);font-size:11px}
 
   #gate{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:var(--bg)}
   .gatecard{width:min(400px,92vw);padding:34px 32px;text-align:center}
@@ -121,7 +123,8 @@
 <div class="shell">
   <aside class="side">
     <div class="brand"><img src="/logo.svg" alt="">LIMIT<span class="p">PLANE</span></div>
-    <div class="navlink on"><span class="ic"></span>Organizations</div>
+    <div class="navlink on" id="navOrgs" onclick="showView('orgs')"><span class="ic"></span>Organizations</div>
+    <div class="navlink" id="navUsers" onclick="showView('users')"><span class="ic"></span>Users</div>
     <a class="navlink" href="/dashboard"><span class="ic"></span>Live dashboard</a>
     <a class="navlink" href="https://limitplane.vercel.app"><span class="ic"></span>Website</a>
     <div class="foot">gateway admin<br><span id="footWho"></span></div>
@@ -149,6 +152,20 @@
     <div class="panel glass">
       <h2 id="orgsTitle">All organizations <span></span></h2>
       <div id="orgs"><div class="note">loading…</div></div>
+    </div>
+
+    <div id="usersView" style="display:none">
+      <div class="panel glass">
+        <h2>Create a user <span>an account that can be added to organizations</span></h2>
+        <div class="formrow">
+          <input id="newUserEmail" placeholder="email"><input id="newUserPass" placeholder="password" type="password">
+          <button class="btn" onclick="createUser()">Create user</button>
+        </div>
+      </div>
+      <div class="panel glass">
+        <h2>All users <span id="userCount"></span></h2>
+        <div id="usersList"><div class="note">loading…</div></div>
+      </div>
     </div>
   </main>
 </div>
@@ -258,6 +275,38 @@
 
   function toggleOrg(id){ open.has(id) ? open.delete(id) : open.add(id); paint(); }
 
+  let view = "orgs";
+  function showView(v){
+    view = v;
+    $("navOrgs").classList.toggle("on", v === "orgs");
+    $("navUsers").classList.toggle("on", v === "users");
+    document.querySelector("#orgs").parentElement.style.display = v === "orgs" ? "block" : "none";
+    document.querySelector(".panel.glass").style.display = v === "orgs" ? "block" : "none"; // create-org card
+    $("usersView").style.display = v === "users" ? "block" : "none";
+    $("title").textContent = v === "users" ? "Users" : "Organizations";
+    if (v === "users") loadUsers();
+  }
+  async function loadUsers(){
+    const r = await api("/v1/admin/users");
+    if (!r?.ok) return;
+    const us = r.data.users;
+    $("userCount").textContent = us.length + " total";
+    $("usersList").innerHTML = us.map(u => `<div class="userrow">
+      <span><span class="em">${u.email}</span> <span class="chip ${u.platformRole==="admin"?"admin":"viewer"}">${u.kind==="platform"?u.platformRole:"member"}</span></span>
+      <span style="display:flex;gap:10px;align-items:center">
+        <span class="orgs">${(u.orgs??[]).map(o=>o.name+" ("+o.role+")").join(", ") || (u.kind==="platform"?"platform staff":"no orgs")}</span>
+        ${u.kind==="member" ? `<button class="x" onclick="removeUser('${u.email}')">delete</button>` : ""}
+      </span></div>`).join("") || '<div class="note">no users</div>';
+  }
+  async function createUser(){
+    const email = $("newUserEmail").value.trim(), password = $("newUserPass").value;
+    if (!email || !password) return;
+    await api("/v1/admin/users", { email, password });
+    $("newUserEmail").value = ""; $("newUserPass").value = "";
+    loadUsers();
+  }
+  async function removeUser(email){ await api("/v1/admin/users/remove", { email }); loadUsers(); }
+
   async function createOrg(){
     const name = $("newOrgName").value.trim();
     if (!name) return;
@@ -277,6 +326,8 @@
       $("sniplbl_"+orgId).textContent = `${r.data.site} connected · API key ${r.data.apiKey} · paste into the site:`;
       $("snipcode_"+orgId).textContent = r.data.beacon.replace("http://localhost:3000", location.origin);
       $("sn_"+orgId).value = "";
+      // open a dedicated management tab for the new site's live traffic
+      window.open(location.origin + "/dashboard#" + encodeURIComponent(r.data.site), "_blank");
     }
     refresh();
   }

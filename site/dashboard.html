@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LimitPlane · Live Dashboard</title>
-<meta name="description" content="Live control room for the LimitPlane gateway: real traffic, visitor heatmap, behavioral fingerprints, autopilot, AI ops chat.">
+<meta name="description" content="Live control room: real traffic, visitor heatmap + 3D globe, behavioral fingerprints, active autopilot, AI ops chat.">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -145,7 +145,6 @@
   .keybox input{flex:1;border:none;background:transparent;font:13px var(--mono);color:var(--ink);outline:none;padding:10px 12px}
 
   /* ---------- login gate ---------- */
-  #three-bg{position:fixed;inset:0;z-index:-1;opacity:.5;pointer-events:none}
   #map{height:300px;border-radius:14px;overflow:hidden}
   .leaflet-container{background:transparent;font:11px var(--mono)}
   .ipchip{font-size:10px;color:var(--faint);background:var(--inner);padding:2px 7px;border-radius:99px;white-space:nowrap}
@@ -161,6 +160,14 @@
   .maplegend{display:flex;gap:12px;margin-top:8px;font:10px var(--mono);color:var(--faint);flex-wrap:wrap}
   .maplegend span{display:flex;align-items:center;gap:5px}
   .maplegend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  #three-bg{position:fixed;inset:0;z-index:-1;opacity:.5;pointer-events:none}
+  #globe canvas{width:100%;height:100%;display:block;border-radius:14px}
+  .devchip{font-size:10px;color:var(--dim);background:var(--inner);padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .aprules{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+  .aprule{font:10px var(--mono);padding:4px 9px;border-radius:8px;background:var(--inner);color:var(--dim);display:flex;align-items:center;gap:5px}
+  .aprule i{width:6px;height:6px;border-radius:50%;background:var(--teal)}
+  .aprule.ai i{background:var(--sky)} .aprule.off i{background:var(--faint)}
+  .act .t.ai_ban{color:var(--sky)}
   .chatfab{position:fixed;right:22px;bottom:22px;z-index:55;width:52px;height:52px;border:none;border-radius:50%;cursor:pointer;font-size:20px;color:#fff;background:linear-gradient(135deg,var(--sky),var(--teal));box-shadow:0 10px 26px rgba(2,132,199,.35)}
   .chatbox{position:fixed;right:22px;bottom:84px;z-index:55;width:min(360px,calc(100vw - 44px));display:none;flex-direction:column;overflow:hidden}
   .chatbox.open{display:flex}
@@ -239,8 +246,9 @@
   </div>
 
   <div class="panel glass">
-    <h2>Visitor map <span class="maptools"><button id="heatBtn" class="on" onclick="setMapMode('heat')">heatmap</button><button id="ptBtn" onclick="setMapMode('points')">points</button><span id="visMeta"></span></span></h2>
+    <h2>Visitor map <span class="maptools"><button id="heatBtn" class="on" onclick="setMapMode('heat')">heatmap</button><button id="ptBtn" onclick="setMapMode('points')">points</button><button id="globeBtn" onclick="setMapMode('globe')">3D globe</button><span id="visMeta"></span></span></h2>
     <div id="map" class="neo-in"></div>
+    <div id="globe" class="neo-in" style="display:none;height:340px"></div>
     <div class="maplegend"><span><i style="background:#2dd4bf"></i>human</span><span><i style="background:#38bdf8"></i>AI agent</span><span><i style="background:#fbbf24"></i>crawler</span><span><i style="background:#fb7185"></i>retry-bug</span></div>
   </div>
 
@@ -268,8 +276,9 @@
       <div class="feed" id="feed"><div class="empty">Waiting…</div></div>
     </div>
     <div class="panel glass">
-      <h2>Autopilot</h2>
-      <div class="acts" id="acts"><div class="empty">Quiet</div></div>
+      <h2>Autopilot <span id="apState"></span></h2>
+      <div id="apRules" class="aprules"></div>
+      <div class="acts" id="acts"><div class="empty">Watching — rules armed, AI review every 20s</div></div>
     </div>
   </div>
 
@@ -376,7 +385,7 @@
     $("kBans").textContent = s.tenants.filter(t => t.bannedMs > 0).length;
     $("kUp").innerHTML = ago(s.uptimeMs) + "<small></small>";
     if (s.uniqueVisitors !== undefined) $("kVis").textContent = s.uniqueVisitors;
-    if (s.visitors) updateMap(s.visitors);
+    if (s.visitors){ lastVisitors = s.visitors; mapMode === "globe" ? drawGlobe(s.visitors) : updateMap(s.visitors); }
 
     drawChart(s.series);
 
@@ -528,6 +537,7 @@
   }
   if (PROXY){ tick(); pollTimer = setInterval(tick, 1500); }
   else if (token){ enterUi(); tick(); connectLive(); }
+  if (token || PROXY){ refreshAutopilot(); setInterval(refreshAutopilot, 8000); }
 
   // ---------- real-time management (admin) ----------
   async function mgmt(action, tenantId){
@@ -589,7 +599,11 @@
     mapMode = m;
     $("heatBtn").classList.toggle("on", m === "heat");
     $("ptBtn").classList.toggle("on", m === "points");
-    updateMap(lastVisitors);
+    $("globeBtn").classList.toggle("on", m === "globe");
+    const globe = m === "globe";
+    $("map").style.display = globe ? "none" : "block";
+    $("globe").style.display = globe ? "block" : "none";
+    if (globe){ initGlobe(); drawGlobe(lastVisitors); } else updateMap(lastVisitors);
   }
   function updateMap(vs){
     lastVisitors = vs;
@@ -616,6 +630,70 @@
     }
     const local = vs.filter(v => v.geo === "local").length;
     $("visMeta").textContent = `${vs.length} unique · ${located} located${local ? ` · ${local} local` : ""}`;
+  }
+
+  // ---------- 3D globe: visitors as glowing pins on a rotating sphere ----------
+  let G = null; // { renderer, scene, cam, sphere, pins }
+  function latLonToXYZ(lat, lon, r){
+    const phi = (90 - lat) * Math.PI / 180, theta = (lon + 180) * Math.PI / 180;
+    return [-r * Math.sin(phi) * Math.cos(theta), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(theta)];
+  }
+  async function initGlobe(){
+    if (G || !window.THREE_NS) { if (!window.THREE_NS) await loadThree(); }
+    if (G) return;
+    const THREE = window.THREE_NS, el = $("globe");
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(el.clientWidth, el.clientHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    el.innerHTML = ""; el.appendChild(renderer.domElement);
+    const scene = new THREE.Scene();
+    const cam = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, .1, 100);
+    cam.position.z = 260;
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(90, 48, 48),
+      new THREE.MeshBasicMaterial({ color: 0x0b3a4a, transparent: true, opacity: .55 }));
+    const wire = new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.SphereGeometry(90.4, 24, 18)),
+      new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: .14 }));
+    const grp = new THREE.Group(); grp.add(sphere); grp.add(wire); scene.add(grp);
+    const pins = new THREE.Group(); grp.add(pins);
+    G = { THREE, renderer, scene, cam, grp, pins, el };
+    (function spin(){ if (!G) return; requestAnimationFrame(spin); grp.rotation.y += .0016; renderer.render(scene, cam); })();
+    addEventListener("resize", () => { if (G){ renderer.setSize(el.clientWidth, el.clientHeight); cam.aspect = el.clientWidth/el.clientHeight; cam.updateProjectionMatrix(); } });
+  }
+  function loadThree(){
+    return new Promise(res => {
+      import("https://unpkg.com/three@0.160.0/build/three.module.js").then(m => { window.THREE_NS = m; res(); });
+    });
+  }
+  const GLOBE_COLOR = { human: 0x2dd4bf, ai_agent: 0x38bdf8, crawler: 0xfbbf24, retry_bug: 0xfb7185, warming: 0x94a3b8 };
+  function drawGlobe(vs){
+    if (!G) return;
+    const THREE = G.THREE;
+    while (G.pins.children.length) G.pins.remove(G.pins.children[0]);
+    for (const v of vs){
+      if (typeof v.lat !== "number") continue;
+      const [x,y,z] = latLonToXYZ(v.lat, v.lon, 91);
+      const h = Math.min(6 + Math.log2(v.count + 1) * 5, 34);
+      const col = GLOBE_COLOR[v.label] ?? 0x2dd4bf;
+      const pin = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, h, 6), new THREE.MeshBasicMaterial({ color: col }));
+      const [ox,oy,oz] = latLonToXYZ(v.lat, v.lon, 91 + h/2);
+      pin.position.set(ox, oy, oz);
+      pin.lookAt(0,0,0); pin.rotateX(Math.PI/2);
+      G.pins.add(pin);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(2.4, 8, 8), new THREE.MeshBasicMaterial({ color: col }));
+      const [tx,ty,tz] = latLonToXYZ(v.lat, v.lon, 91 + h);
+      dot.position.set(tx,ty,tz); G.pins.add(dot);
+    }
+  }
+
+  // ---------- autopilot state: prove it is armed and show what it does --------
+  async function refreshAutopilot(){
+    try{
+      const st = await fetchJson("/autopilot");
+      $("apRules").innerHTML = st.rules.map(r =>
+        `<span class="aprule ${r.kind.startsWith("ai") ? "ai" : ""}${r.kind.includes("offline") ? " off" : ""}" title="${r.trigger}"><i></i>${r.name}</span>`
+      ).join("");
+      $("apState").textContent = `${st.activeBans.length} active ban${st.activeBans.length===1?"":"s"} · ${st.totalActions} actions`;
+    }catch{}
   }
 
   // ---------- AI chat (Groq, grounded in live gateway state) ----------

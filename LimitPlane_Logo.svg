@@ -1,13 +1,15 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0ea5e9"/>
-      <stop offset="100%" stop-color="#0d9488"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#0d9488"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="118" fill="url(#bg)"/>
-  <rect x="96" y="244" width="320" height="40" rx="20" fill="#ffffff"/>
-  <circle cx="256" cy="156" r="44" fill="#ffffff"/>
-  <circle cx="196" cy="360" r="26" fill="#ffffff" opacity=".55"/>
-  <circle cx="316" cy="360" r="26" fill="#ffffff" opacity=".3"/>
+  <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+  <!-- the limit plane: one bold bar -->
+  <rect x="86" y="232" width="340" height="48" rx="24" fill="#ffffff"/>
+  <!-- allowed request: big dot above, punched through -->
+  <circle cx="256" cy="150" r="52" fill="#ffffff"/>
+  <!-- blocked below -->
+  <circle cx="256" cy="366" r="30" fill="#062a30" opacity=".85"/>
 </svg>

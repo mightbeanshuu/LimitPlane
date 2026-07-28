@@ -17,10 +17,13 @@ import { readFileSync } from "node:fs";
 import { createLimitPlane } from "./gateway/limitPlane.js";
 import { createAutomations } from "./gateway/automations.js";
 import { createStats } from "./gateway/stats.js";
+import { MonthlyQuotaLimiter } from "./algorithms/monthlyQuotaLimiter.js";
 import { createWsHub } from "./gateway/wsHub.js";
 import { createExplainer } from "./ai/aiExplainer.js";
 import { createMemory } from "./ai/memoryStore.js";
 import { createFingerprints } from "./gateway/fingerprint.js";
+import { parseUA } from "./gateway/userAgent.js";
+import { createTokenMeter } from "./ai/tokenMeter.js";
 import { classifyText } from "./demo/nsfwStub.js";
 import { createBilling, TenantStore, PLANS } from "./billing/stripeBilling.js";
 import { createAuth, sign } from "./auth/jwt.js";
@@ -88,16 +91,17 @@ const fingerprints = createFingerprints({
 // can cite real history instead of guessing. Allowed requests are noise and
 // stay out. See src/ai/memoryStore.js for the whole RAG pipeline.
 const memory = createMemory({ file: new URL("../.memory.jsonl", import.meta.url).pathname });
+const tokenMeter = createTokenMeter({ apiKey: process.env.GROQ_API_KEY }); // INNOVATION #3
 const when = (t) => new Date(t).toISOString().slice(0, 16).replace("T", " ");
 
 // ---- Visitors: unique IPs, geolocated for the live map ------------------------
 // Geo comes from ip-api.com (free, server-side, cached per IP). Private and
 // localhost addresses get labeled instead of looked up.
-const visitors = new Map(); // ip -> { count, lastSeen, city, country, lat, lon }
+const visitors = new Map(); // ip -> { ip, count, lastSeen, city, country, lat, lon, device, os, browser }
 function isPrivateIp(ip) {
   return !ip || ip === "unknown" || /^(::1|::ffff:127\.|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::ffff:10\.|::ffff:192\.168\.|fe80|fc|fd)/.test(ip);
 }
-function trackVisitor(ip) {
+function trackVisitor(ip, ua) {
   if (!ip) return;
   let v = visitors.get(ip);
   if (!v) {
@@ -113,6 +117,10 @@ function trackVisitor(ip) {
         })
         .catch(() => { v.geo = "unknown"; });
     }
+  }
+  if (ua && !v.os) {
+    const p = parseUA(ua); // exact machine: macOS / iOS / Windows + browser
+    Object.assign(v, { device: p.device, os: p.os, browser: p.browser });
   }
   v.count += 1;
   v.lastSeen = Date.now();
@@ -146,13 +154,18 @@ setInterval(() => {
   push("stats", stats.snapshot({ banCheck: automations.banRemainingMs }));
 }, 2000);
 
+// Shared monthly meter: the gateway AND the token-metering proxy charge the
+// same per-tenant monthly budget, so LLM token spend and normal request units
+// draw down one pool.
+const monthlyMeter = new MonthlyQuotaLimiter();
 const lp = createLimitPlane({
   policy,
   automations,
   fingerprints,
+  monthly: monthlyMeter,
   onDecision: (e) => {
     stats.onDecision(e);
-    trackVisitor(e.ip); // the map learns about every client
+    trackVisitor(e.ip, e.ua); // the map learns about every client + its device/OS
     if (!e.allowed) {
       memory.remember(
         `${when(e.at)} ${e.tenantId} blocked on ${e.route}: ${e.reason} (tier ${e.tier}, cost ${e.cost}${e.monthlyUsed !== undefined ? `, monthly ${e.monthlyUsed} used` : ""}${e.ip ? `, ip ${e.ip}` : ""})`,
@@ -190,6 +203,26 @@ function canManageOrg(claims, orgId) {
   if (claims.role === "admin") return true;
   return ["owner", "admin"].includes(orgStore.roleIn(orgId, claims.sub));
 }
+
+// ---- AI autoban loop: give the autopilot a periodic second brain ------------
+// Feeds fingerprinted repeat-blockers to Groq every 20s; it may ban clients
+// the deterministic rules miss. Every AI ban is logged as type "ai_ban".
+automations.enableAiReview({
+  apiKey: process.env.GROQ_API_KEY,
+  fetchImpl: fetch,
+  getCandidates: () =>
+    stats.snapshot({ banCheck: automations.banRemainingMs }).tenants.map((t) => ({
+      tenantId: t.tenantId,
+      label: fingerprints.get(t.tenantId)?.label ?? null,
+      features: fingerprints.get(t.tenantId)?.features ?? null,
+      blocked: t.blocked,
+      ok: t.allowed,
+    })),
+});
+setInterval(async () => {
+  const r = await automations.runAiReview();
+  if (r.banned?.length) push("stats", stats.snapshot({ banCheck: automations.banRemainingMs }));
+}, 20_000);
 
 // ---- Billing: live if env keys are set, honest demo mode if not -------------
 const tenantStore = new TenantStore({
@@ -268,6 +301,7 @@ const server = http.createServer(async (req, res) => {
       apiKey: params.get("k") ?? undefined,
       ip: (req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() || req.socket?.remoteAddress,
       route: path,
+      ua: req.headers["user-agent"], // the visitor's real device/OS
     });
     res.statusCode = decision.allowed ? 204 : 429;
     res.setHeader("Access-Control-Allow-Origin", "*"); // pixel responses are public anyway
@@ -366,6 +400,67 @@ const server = http.createServer(async (req, res) => {
     if (!org) return sendJson(res, 400, { error: "bad_org_or_role" });
     return sendJson(res, 200, { org: org.id, members: org.members });
   }
+  // ---- User management (platform staff) -------------------------------------
+  if (route === "/v1/admin/users" && req.method === "GET") {
+    if (!requireRole(req, res, ["admin", "viewer"])) return;
+    // Every known account: platform staff + org members, with their orgs.
+    const staff = [
+      { email: "demo@limitplane.dev", platformRole: "admin", kind: "platform" },
+      { email: "viewer@limitplane.dev", platformRole: "viewer", kind: "platform" },
+    ];
+    const orgUsers = Object.entries(orgStore.data.users).map(([email, u]) => ({
+      email,
+      platformRole: u.platformRole,
+      kind: "member",
+      orgs: orgStore.orgsFor(email).map((o) => ({ id: o.id, name: o.name, role: o.members[email] })),
+    }));
+    return sendJson(res, 200, { users: [...staff, ...orgUsers] });
+  }
+  if (route === "/v1/admin/users" && req.method === "POST") {
+    if (!requireRole(req, res, ["admin"])) return;
+    const body = parseJson(await readRawBody(req));
+    if (!body.email || !body.password) return sendJson(res, 400, { error: "email and password required" });
+    orgStore.createUser(body.email, body.password);
+    return sendJson(res, 201, { email: body.email });
+  }
+  if (route === "/v1/admin/users/remove" && req.method === "POST") {
+    if (!requireRole(req, res, ["admin"])) return;
+    const body = parseJson(await readRawBody(req));
+    if (!orgStore.data.users[body.email]) return sendJson(res, 404, { error: "unknown_user" });
+    for (const o of orgStore.orgsFor(body.email)) orgStore.removeMember(o.id, body.email);
+    delete orgStore.data.users[body.email];
+    orgStore.save();
+    return sendJson(res, 200, { removed: body.email });
+  }
+
+  // ---- Autopilot state: what it is and what it is doing ----------------------
+  if (route === "/v1/admin/autopilot") {
+    if (!requireRole(req, res, ["admin", "viewer", "user"])) return;
+    return sendJson(res, 200, automations.state());
+  }
+
+  // ---- LLM token metering proxy (INNOVATION #3) ------------------------------
+  // Real inference, charged to the tenant's monthly meter in REAL tokens+$.
+  if (route === "/v1/ai/proxy" && req.method === "POST") {
+    const body = parseJson(await readRawBody(req));
+    const apiKey = req.headers["x-api-key"];
+    const tenant = tenantStore.get(apiKey);
+    if (!tenant) return sendJson(res, 401, { error: "unknown_api_key", message: "Connect the site first." });
+    if (!body.prompt) return sendJson(res, 400, { error: "prompt required" });
+
+    const result = await tokenMeter.complete({ prompt: body.prompt, maxTokens: body.maxTokens });
+    // Charge the monthly meter with the REAL token cost (units), then record.
+    const plan = policy.tiers[tenant.tier];
+    let over = false;
+    if (plan?.monthlyQuota !== undefined) {
+      const m = monthlyMeter.check({ key: `${tenant.tenantId}:${tenant.tier}:monthly`, quota: plan.monthlyQuota, cost: result.units });
+      over = !m.allowed;
+      if (over) memory.remember(`${when(Date.now())} ${tenant.tenantId} token budget exhausted on /v1/ai/proxy (${result.usage.totalTokens} tokens)`, { kind: "block" });
+    }
+    if (over) return sendJson(res, 429, { error: "monthly_quota_exhausted", cost: result });
+    return sendJson(res, 200, { reply: result.text, usage: result.usage, units: result.units, usd: result.usd });
+  }
+
   if (route === "/v1/admin/orgs/members/remove" && req.method === "POST") {
     const claims = requireRole(req, res, ["admin", "user"]);
     if (!claims) return;

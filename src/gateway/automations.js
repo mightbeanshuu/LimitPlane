@@ -153,11 +153,82 @@ export function createAutomations({
     return act({ type: "manual_unban", tenantId, message: was ? `${by} lifted the cooldown on ${tenantId}.` : `${by} tried to unban ${tenantId}, but it wasn't banned.` });
   }
 
+  // ---- AI review loop: the autopilot's second brain -------------------------
+  // The deterministic rules above are fast and certain but literal. This
+  // periodically hands recent suspicious behavior to Groq and lets it BAN
+  // clients the rules would miss (e.g. a slow, distributed abuse pattern).
+  // Guardrails: it can only act on clients that are ALREADY blocking a lot,
+  // it must return strict JSON, and every AI ban is logged as such — you can
+  // always see which bans were rules vs which were the model.
+  let aiReviewer = null; // { fetchImpl, apiKey, getCandidates }
+  function enableAiReview(cfg) {
+    aiReviewer = cfg;
+  }
+
+  async function runAiReview() {
+    if (!aiReviewer?.apiKey) return { ran: false };
+    const candidates = aiReviewer.getCandidates(); // [{tenantId, label, blocked, ok, features}]
+    const suspects = candidates.filter((c) => c.blocked >= 3 && !bans.has(c.tenantId));
+    if (suspects.length === 0) return { ran: true, banned: [] };
+
+    try {
+      const r = await aiReviewer.fetchImpl("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${aiReviewer.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: aiReviewer.model ?? "llama-3.3-70b-versatile",
+          temperature: 0.1,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: 'You are a rate-limiting gateway\'s security reviewer. Given suspect clients (behavior label, block/ok counts, timing features), decide which to temporarily ban as likely abuse or broken retry loops. Respond ONLY as JSON: {"bans":[{"tenantId":"...","minutes":N,"reason":"short"}]}. Ban conservatively; humans and legitimate agents should never be banned.' },
+            { role: "user", content: JSON.stringify({ suspects }) },
+          ],
+        }),
+      });
+      const d = await r.json();
+      const parsed = JSON.parse(d.choices?.[0]?.message?.content ?? "{}");
+      const banned = [];
+      for (const b of parsed.bans ?? []) {
+        if (!b.tenantId || bans.has(b.tenantId)) continue;
+        if (!suspects.some((s) => s.tenantId === b.tenantId)) continue; // only from the vetted set
+        const minutes = Math.min(Math.max(Number(b.minutes) || 5, 1), 60);
+        bans.set(b.tenantId, now() + minutes * 60_000);
+        act({ type: "ai_ban", tenantId: b.tenantId, cooldownMs: minutes * 60_000, message: `AI reviewer banned ${b.tenantId} for ${minutes}m: ${b.reason ?? "suspected abuse"}` });
+        banned.push(b.tenantId);
+      }
+      return { ran: true, banned };
+    } catch {
+      return { ran: true, banned: [], error: true };
+    }
+  }
+
+  // A snapshot of what the autopilot is currently doing (for the dashboard).
+  function state() {
+    const activeBans = [];
+    for (const [id, until] of bans) {
+      const left = until - now();
+      if (left > 0) activeBans.push({ tenantId: id, remainingMs: left });
+    }
+    return {
+      rules: [
+        { name: "quota alert", trigger: "tenant crosses 80% of monthly plan", kind: "deterministic" },
+        { name: "upgrade nudge", trigger: "3 monthly-cap hits in a month", kind: "deterministic" },
+        { name: "storm cooldown", trigger: `${stormThreshold} burst-blocks in ${stormWindowMs / 1000}s`, kind: "deterministic" },
+        { name: "AI review", trigger: "periodic Groq review of repeat-blockers", kind: aiReviewer?.apiKey ? "ai" : "ai (offline)" },
+      ],
+      activeBans,
+      totalActions: actions.length,
+    };
+  }
+
   return {
     onDecision,
     banRemainingMs,
     ban,
     unban,
+    enableAiReview,
+    runAiReview,
+    state,
     recent: (n = 50) => actions.slice(-n).reverse(), // newest first, like the audit log
   };
 }

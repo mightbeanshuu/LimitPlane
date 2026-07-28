@@ -37,7 +37,7 @@ export function createLimitPlane({
   //   burst:   "are you going too fast right now?"           (protection)
   // Monthly is asked first — no point rationing the speed of requests the
   // plan can't pay for at all.
-  async function check({ apiKey, ip, route }) {
+  async function check({ apiKey, ip, route, ua }) {
     const { tenantId, tier } = engine.identify({ apiKey, ip }); // step 1: who
     const plan = engine.resolve({ tenantId, tier, route }); // step 2: what jar, what price
 
@@ -124,6 +124,7 @@ export function createLimitPlane({
       monthlyUsed: month?.used,
       monthlyRemaining: month?.remaining,
       label: lane?.label, // behavioral class at decision time
+      ua, // user-agent string, for device/OS identification
     });
     if (fingerprints) fingerprints.observe(event); // learn from this request
     if (automations) automations.onDecision(event); // feed the autopilot
@@ -152,6 +153,7 @@ export function createLimitPlane({
       // behind a proxy (Render/Vercel) the real client is in x-forwarded-for
       ip: (req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() || req.socket?.remoteAddress,
       route: (req.url ?? "/").split("?")[0], // path only, no query string
+      ua: req.headers["user-agent"],
     });
 
     // step 4: budget headers on EVERY response, allowed or not — good API
