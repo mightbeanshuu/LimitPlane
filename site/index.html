@@ -138,23 +138,23 @@
 
     <div class="tabpanel on" id="p-proxy">
       <div class="step"><div class="n">1</div><div>
-        <h3>Get LimitPlane</h3>
-        <p>Clone it once. It has zero runtime dependencies.</p>
-        <div class="code"><pre>git clone https://github.com/mightbeanshuu/LimitPlane && cd LimitPlane</pre><button class="copy">copy</button></div>
+        <h3>One command. Protected.</h3>
+        <p>No install, no clone, no config. Point it at your site and send traffic to port 3000. Every visitor gets 60 requests/minute out of the box.</p>
+        <div class="code"><pre>npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080</pre><button class="copy">copy</button></div>
       </div></div>
       <div class="step"><div class="n">2</div><div>
-        <h3>Describe your limits in one JSON file</h3>
-        <p>Point <code>upstream</code> at your existing site, price your routes, done.</p>
-        <div class="code"><pre>cp limitplane.config.example.json limitplane.config.json
-# { "upstream": "http://localhost:8080",
-#   "policy": { "tiers": { "free": {...}, "pro": {...} },
-#               "routes": { "/api/ai-scan": { "costClass": "heavy" } } } }</pre><button class="copy">copy</button></div>
+        <h3>Price your AI routes with flags</h3>
+        <p>Mark expensive endpoints heavy (5 tokens each) and tune the per-visitor budget.</p>
+        <div class="code"><pre>npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080 \
+  --rpm 120 --heavy /api/ai-scan,/api/generate</pre><button class="copy">copy</button></div>
       </div></div>
       <div class="step"><div class="n">3</div><div>
-        <h3>Start the layer, send traffic to it</h3>
-        <p>Blocked requests get a clean 429 + Retry-After and never reach your servers.</p>
-        <div class="code"><pre>node bin/limitplane.js --config limitplane.config.json
-# LimitPlane proxy on http://localhost:3000 → protecting http://localhost:8080</pre><button class="copy">copy</button></div>
+        <h3>Go multi-tenant when you're ready</h3>
+        <p>A config file adds tiers, API keys, and per-customer budgets. Blocked requests get a clean 429 + Retry-After and never reach your servers.</p>
+        <div class="code"><pre>cp limitplane.config.example.json limitplane.config.json
+node bin/limitplane.js --config limitplane.config.json
+# { "policy": { "tiers": { "free": {...}, "pro": {...} },
+#   "tenants": { "customer-key": { "tenantId": "acme", "tier": "pro" } } } }</pre><button class="copy">copy</button></div>
       </div></div>
     </div>
 

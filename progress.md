@@ -1075,3 +1075,12 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Dependencies changed: none (proxy is plain node:http/https)
 - Learner stuck point: None
 - Revisit later: Session 12 dynamic config reload would let the proxy pick up policy edits without restart - natural next step.
+
+## 2026-07-28 - Universal One-Liner Attach
+- Command: `npx --yes github:mightbeanshuu/LimitPlane --upstream http://localhost:8080 --rpm 6 --heavy /api/scan` (cold, from scratch dir) + curl verification
+- Reason: Make attaching to any site as easy as possible: config file now optional. Built-in default policy (60 rpm per visitor by IP, tunable --rpm, AI routes priced via --heavy), --help added. Site + README now lead with the one-liner.
+- Result: Success; verified the literal stranger experience: one npx command from a clean directory protected a foreign dummy site (200 then 429 with Retry-After on a heavy route, light routes unaffected). Site redeployed with the new 3-step proxy tab.
+- Files changed: bin/limitplane.js (default policy + flags + --help), site/index.html (proxy tab leads with npx one-liner), README.md (attach section leads with one-liner)
+- Dependencies changed: none
+- Learner stuck point: None
+- Revisit later: Session 12 dynamic config reload still the natural next step.

@@ -25,19 +25,29 @@ cost class** and budgets them per **tenant + tier + route**.
             └─────────────────────────────────────────────┘
 ```
 
-## Attach to ANY site (proxy mode — no code changes)
+## Attach to ANY site (proxy mode — one command, no code changes)
 
 Your site can be Python, PHP, Rails, static files, anything. LimitPlane runs
 as a tiny gateway in front of it; blocked requests never reach your servers.
 
 ```bash
-# 1. get it
+npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080
+```
+
+That's it — every visitor now gets 60 requests/minute (keyed by IP). Tune it
+with flags, no config file needed:
+
+```bash
+npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080 \
+  --rpm 120 --heavy /api/ai-scan,/api/generate   # heavy routes cost 5 tokens
+```
+
+For the full multi-tenant story (tiers, API keys, per-customer budgets),
+use a config file instead:
+
+```bash
 git clone https://github.com/mightbeanshuu/LimitPlane && cd LimitPlane
-
-# 2. describe your limits (point "upstream" at your existing site)
-cp limitplane.config.example.json limitplane.config.json
-
-# 3. start the layer, send traffic to it instead of your site
+cp limitplane.config.example.json limitplane.config.json   # point "upstream" at your site
 node bin/limitplane.js --config limitplane.config.json
 # LimitPlane proxy on http://localhost:3000 → protecting http://localhost:8080
 ```
