@@ -74,6 +74,11 @@ export class PolicyEngine {
       refillRatePerMs: tierConfig.refillPerSecond / 1000, // limiters think in ms
       cost, // tokens to spend
       costClass, // kept for headers + audit log
+      // Monthly plan (optional): one account-wide meter per tenant — NOT
+      // per-route, because a plan is "10,000 units a month total", like a
+      // phone plan, not per-app-you-call. undefined = tier has no monthly cap.
+      monthlyQuota: tierConfig.monthlyQuota,
+      monthlyKey: `${tenantId}:${tier}:monthly`,
     };
   }
 }

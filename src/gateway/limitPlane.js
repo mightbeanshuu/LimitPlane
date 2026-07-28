@@ -17,39 +17,59 @@
 //   6. audit     -> write the decision in the diary either way
 
 import { TokenBucketLimiter } from "../algorithms/tokenBucketLimiter.js";
+import { MonthlyQuotaLimiter } from "../algorithms/monthlyQuotaLimiter.js";
 import { PolicyEngine } from "./policyEngine.js";
 import { AuditLog } from "./auditLog.js";
 
 export function createLimitPlane({
   policy, // the rulebook (tiers, routes, tenants) — required
-  limiter = new TokenBucketLimiter(), // the muscle; swap in a Redis limiter for multi-server
+  limiter = new TokenBucketLimiter(), // the burst muscle; swap in Redis for multi-server
+  monthly = new MonthlyQuotaLimiter(), // the plan meter (only used if a tier sets monthlyQuota)
   audit = new AuditLog(), // the diary
   onDecision, // optional hook: gets every audit event (metrics, alerts...)
 } = {}) {
   const engine = new PolicyEngine(policy);
 
-  // One request -> one decision. This is the whole gateway in ~30 lines.
+  // One request -> one decision. Two questions, in order:
+  //   monthly: "does your PLAN have units left this month?"  (billing)
+  //   burst:   "are you going too fast right now?"           (protection)
+  // Monthly is asked first — no point rationing the speed of requests the
+  // plan can't pay for at all.
   async function check({ apiKey, ip, route }) {
     const { tenantId, tier } = engine.identify({ apiKey, ip }); // step 1: who
     const plan = engine.resolve({ tenantId, tier, route }); // step 2: what jar, what price
 
-    // step 3: the limiter says yes/no. `await` works for both the in-memory
-    // limiters (sync) and Redis limiters (async) — that's why it's here.
-    const result = await limiter.check({
-      key: plan.key,
-      capacity: plan.capacity,
-      refillRatePerMs: plan.refillRatePerMs,
-      cost: plan.cost,
-    });
+    // step 3a: the monthly plan meter (skipped when the tier has no cap)
+    let month = null;
+    if (plan.monthlyQuota !== undefined) {
+      month = monthly.check({ key: plan.monthlyKey, quota: plan.monthlyQuota, cost: plan.cost });
+    }
 
-    // How long until the jar has enough tokens again? Simple estimate:
-    // missing tokens / refill speed. Only meaningful when blocked.
+    // step 3b: the burst limiter — but only spend burst tokens if the plan
+    // said yes (a request the plan rejected shouldn't drain the bucket too).
+    let result = { allowed: false, remaining: 0 };
+    if (!month || month.allowed) {
+      result = await limiter.check({
+        key: plan.key,
+        capacity: plan.capacity,
+        refillRatePerMs: plan.refillRatePerMs,
+        cost: plan.cost,
+      });
+    }
+
+    const allowed = (month ? month.allowed : true) && result.allowed;
+    // WHY was it blocked? Different reasons deserve different fixes:
+    // monthly -> upgrade your plan or wait for the 1st; burst -> just slow down.
+    const reason = allowed ? null : month && !month.allowed ? "monthly_quota" : "burst";
+
+    // How long until the burst jar refills enough? Only meaningful for burst blocks.
     const missing = Math.max(plan.cost - result.remaining, 0);
-    const retryAfterMs = result.allowed ? 0 : Math.ceil(missing / plan.refillRatePerMs);
+    const retryAfterMs =
+      reason === "burst" ? Math.ceil(missing / plan.refillRatePerMs) : 0;
 
     // step 6: diary entry (recorded for allowed AND blocked — both are facts)
     const event = audit.record({
-      allowed: result.allowed,
+      allowed,
       key: plan.key,
       route,
       tenantId,
@@ -57,11 +77,15 @@ export function createLimitPlane({
       costClass: plan.costClass,
       cost: plan.cost,
       remaining: result.remaining,
+      reason,
+      monthlyUsed: month?.used,
+      monthlyRemaining: month?.remaining,
     });
     if (onDecision) onDecision(event);
 
     return {
-      allowed: result.allowed,
+      allowed,
+      reason,
       remaining: result.remaining,
       limit: plan.capacity,
       cost: plan.cost,
@@ -69,6 +93,8 @@ export function createLimitPlane({
       retryAfterMs,
       tenantId,
       tier,
+      monthly: month, // { used, remaining, resetsAt } or null
+      monthlyQuota: plan.monthlyQuota,
     };
   }
 
@@ -86,20 +112,41 @@ export function createLimitPlane({
     res.setHeader("X-RateLimit-Limit", String(decision.limit));
     res.setHeader("X-RateLimit-Remaining", String(Math.max(decision.remaining, 0)));
     res.setHeader("X-LimitPlane-Cost-Class", decision.costClass);
+    if (decision.monthly) {
+      res.setHeader("X-Monthly-Limit", String(decision.monthlyQuota));
+      res.setHeader("X-Monthly-Remaining", String(decision.monthly.remaining));
+      res.setHeader("X-Monthly-Reset", new Date(decision.monthly.resetsAt).toISOString());
+    }
 
     if (!decision.allowed) {
-      // step 5 (blocked): standard 429 with the facts a client needs to behave.
-      const retryAfterSeconds = Math.ceil(decision.retryAfterMs / 1000);
+      // step 5 (blocked): standard 429, but the MESSAGE depends on WHY.
+      // Burst block: slow down, retry in seconds. Monthly block: your plan
+      // is spent — upgrade, or wait for the 1st. Different problems.
       res.statusCode = 429;
-      res.setHeader("Retry-After", String(retryAfterSeconds));
       res.setHeader("Content-Type", "application/json");
-      res.end(
-        JSON.stringify({
-          error: "rate_limited",
-          message: `This ${decision.costClass} request costs ${decision.cost} tokens but your ${decision.tier} tier bucket has ${Math.max(decision.remaining, 0)}. Retry in ~${retryAfterSeconds}s.`,
-          retryAfterSeconds,
-        })
-      );
+
+      if (decision.reason === "monthly_quota") {
+        const resetsAt = new Date(decision.monthly.resetsAt).toISOString();
+        res.setHeader("Retry-After", String(Math.ceil((decision.monthly.resetsAt - Date.now()) / 1000)));
+        res.end(
+          JSON.stringify({
+            error: "monthly_quota_exhausted",
+            message: `Your ${decision.tier} plan's ${decision.monthlyQuota} units for this month are used up. Upgrade your plan or wait until ${resetsAt}.`,
+            resetsAt,
+            upgrade: "/v1/billing/plans",
+          })
+        );
+      } else {
+        const retryAfterSeconds = Math.ceil(decision.retryAfterMs / 1000);
+        res.setHeader("Retry-After", String(retryAfterSeconds));
+        res.end(
+          JSON.stringify({
+            error: "rate_limited",
+            message: `This ${decision.costClass} request costs ${decision.cost} tokens but your ${decision.tier} tier bucket has ${Math.max(decision.remaining, 0)}. Retry in ~${retryAfterSeconds}s.`,
+            retryAfterSeconds,
+          })
+        );
+      }
       return decision; // plain-http callers see allowed: false and stop
     }
 

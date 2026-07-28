@@ -113,6 +113,59 @@ The NSFW classifier is a **deterministic keyword stub** (`src/demo/nsfwStub.js`)
 protect. Swapping in a real model is a one-function change; the gateway only
 knows the route is "heavy".
 
+## Monthly plans + Stripe billing
+
+LimitPlane runs TWO meters per request, in order:
+
+1. **Monthly plan meter** (`monthlyQuotaLimiter.js`) — "does your plan have
+   units left this month?" Hard cap, calendar-month window (UTC), resets
+   automatically on the 1st because the month id changes. Protects the
+   customer's wallet: a runaway script can never generate a surprise bill.
+2. **Burst bucket** (`tokenBucketLimiter.js`) — "are you going too fast right
+   now?" Protects your servers. A request the plan rejected never drains
+   burst tokens.
+
+Cost classes apply to both: 1 light request = 1 unit, 1 heavy AI call = 5.
+Tiers opt in by setting `monthlyQuota`; without it, only burst applies.
+
+### The billing automation loop
+
+```
+customer clicks upgrade ─▶ Stripe Checkout (hosted; you never see cards)
+                                │ payment succeeds
+                                ▼
+        Stripe signs + POSTs /v1/billing/webhook
+                                │ HMAC signature verified (node:crypto, no SDK)
+                                ▼
+         tenant's tier flips in the TenantStore
+                                ▼
+   the very next request is limited under the new plan — no restart.
+   Cancellations & failed payments flow back the same way → auto-downgrade.
+```
+
+Run it live:
+
+```bash
+STRIPE_SECRET_KEY=sk_test_... STRIPE_WEBHOOK_SECRET=whsec_... \
+STRIPE_PRICE_PRO=price_... node src/server.js
+```
+
+Demo the loop with no Stripe account (endpoint auto-disables in live mode):
+
+```bash
+curl -s localhost:3000/v1/billing/plans
+curl -s -X POST localhost:3000/v1/billing/simulate \
+  -H "content-type: application/json" -d '{"apiKey":"demo-free-key","plan":"pro"}'
+curl -s localhost:3000/v1/demo/ping -H "x-api-key: demo-free-key"   # now pro, 50k units
+```
+
+The Stripe integration (`src/billing/stripeBilling.js`) is deliberately
+zero-SDK: raw HTTPS + form encoding for Checkout, one HMAC for webhook
+signatures. Read it once and Stripe stops being magic. The pricing model is
+the "Zapier pattern" from Stripe's own SaaS guidance: flat monthly price,
+hard monthly cap, upgrade prompt at the cap. Stripe's newer Meters API
+(pay-per-use invoicing) is the natural later evolution.
+
 ## How to read this codebase (start here when you come back later)
 
 Read in this order — each file is short and comments explain every step:
@@ -123,7 +176,9 @@ Read in this order — each file is short and comments explain every step:
 | 2 | `src/gateway/policyEngine.js` | The brain: who + what → key, budget, price |
 | 3 | `src/gateway/limitPlane.js` | The layer: glues brain to muscle, sets headers, sends 429s |
 | 4 | `src/gateway/auditLog.js` | The diary: every decision written down with facts |
-| 5 | `src/server.js` | A real site wearing the layer (one `await lp.middleware` line) |
+| 5 | `src/algorithms/monthlyQuotaLimiter.js` | The phone plan: hard monthly cap, auto-resets on the 1st |
+| 6 | `src/billing/stripeBilling.js` | Plans, Stripe checkout, webhook automation (zero-SDK) |
+| 7 | `src/server.js` | A real site wearing the layer + billing routes |
 
 Six more limiter algorithms live in `src/algorithms/` (fixed window, sliding
 window log/counter, leaky bucket, and two distributed Redis variants — the Lua

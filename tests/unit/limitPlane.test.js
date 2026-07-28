@@ -140,3 +140,43 @@ test("every decision lands in the audit log with the facts", async () => {
   assert.equal(recent[0].costClass, "heavy");
   assert.equal(seen.length, 3);
 });
+
+test("monthly plan cap blocks even when the burst bucket is full again", async () => {
+  // Tier: huge burst allowance but a phone-plan cap of 10 units/month.
+  const monthlyPolicy = {
+    tiers: { free: { capacity: 100, refillPerSecond: 100, monthlyQuota: 10 } },
+    routes: { "/scan": { costClass: "heavy" }, "*": { costClass: "light" } },
+    tenants: { "key-a": { tenantId: "acme", tier: "free" } },
+  };
+  let time = Date.UTC(2026, 5, 10); // June 10
+  const { TokenBucketLimiter } = await import("../../src/algorithms/tokenBucketLimiter.js");
+  const { MonthlyQuotaLimiter } = await import("../../src/algorithms/monthlyQuotaLimiter.js");
+  const lp = createLimitPlane({
+    policy: monthlyPolicy,
+    limiter: new TokenBucketLimiter({ now: () => time }),
+    monthly: new MonthlyQuotaLimiter({ now: () => time }),
+    audit: new AuditLog({ now: () => time }),
+  });
+  const req = { apiKey: "key-a", route: "/scan" };
+
+  assert.equal((await lp.check(req)).allowed, true); // 5/10 used
+  assert.equal((await lp.check(req)).allowed, true); // 10/10 used
+
+  time += 60_000; // a full minute later — burst bucket is BACK to full...
+  const blocked = await lp.check(req);
+  assert.equal(blocked.allowed, false); // ...but the PLAN is spent
+  assert.equal(blocked.reason, "monthly_quota");
+  assert.equal(blocked.monthly.remaining, 0);
+
+  time = Date.UTC(2026, 6, 1); // July 1: plan renews, all by itself
+  const renewed = await lp.check(req);
+  assert.equal(renewed.allowed, true);
+  assert.equal(renewed.monthly.used, 5);
+});
+
+test("tiers without monthlyQuota skip the plan meter entirely", async () => {
+  let time = 0;
+  const lp = makeGateway(() => time); // base policy has no monthlyQuota
+  const d = await lp.check({ apiKey: "key-a", route: "/scan" });
+  assert.equal(d.monthly, null); // no phantom meter, no phantom headers
+});
