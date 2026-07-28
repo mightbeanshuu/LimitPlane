@@ -46,11 +46,18 @@
   .brand img{width:38px;height:38px;border-radius:10px;box-shadow:4px 4px 10px var(--shadow-dark)}
   .brand .p{color:var(--sky)}
   .hright{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .live{display:flex;align-items:center;gap:8px;font:12px var(--mono);color:var(--dim);padding:9px 16px}
-  .dot{width:9px;height:9px;border-radius:50%;background:var(--teal)}
-  .dot.pulse{animation:pulse 1.6s ease infinite}
-  @keyframes pulse{50%{opacity:.35}}
-  .dot.err{background:var(--rose)}
+  .statusbar{display:flex;align-items:center;gap:10px;font:12px var(--mono);color:var(--dim);padding:9px 16px}
+  .statusbar .sep{width:1px;height:14px;background:var(--glass-edge)}
+  .transport{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--teal);padding:3px 8px;border-radius:99px;background:rgba(13,148,136,.12)}
+  .ping{position:relative;width:12px;height:12px;display:inline-block;flex:none}
+  .ping i{position:absolute;inset:2px;border-radius:50%;background:var(--teal)}
+  .ping::after{content:"";position:absolute;inset:0;border-radius:50%;border:1.5px solid var(--teal);animation:ring 1.8s ease-out infinite}
+  @keyframes ring{0%{transform:scale(.5);opacity:.9}80%,100%{transform:scale(1.8);opacity:0}}
+  .statusbar.err .ping i{background:var(--rose)}
+  .statusbar.err .ping::after{border-color:var(--rose);animation:none;opacity:0}
+  .statusbar.err .transport{color:var(--rose);background:rgba(225,29,72,.12)}
+  .avatar{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 11px var(--display);color:#fff;background:linear-gradient(135deg,var(--sky),var(--teal));flex:none}
+  a.iconbtn{display:flex;align-items:center;justify-content:center;text-decoration:none}
   .iconbtn{width:38px;height:38px;border:none;border-radius:12px;cursor:pointer;background:var(--bg);color:var(--ink);font-size:15px;
     box-shadow:5px 5px 11px var(--shadow-dark),-5px -5px 11px var(--shadow-light)}
   .iconbtn:active{box-shadow:inset 4px 4px 8px var(--shadow-dark),inset -4px -4px 8px var(--shadow-light)}
@@ -73,11 +80,8 @@
   .panel h2{font-family:var(--display);font-size:16px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;gap:10px;flex-wrap:wrap}
   .panel h2 span{font:11px var(--mono);color:var(--faint);letter-spacing:.08em;font-weight:400}
 
-  .chart{display:flex;align-items:flex-end;gap:2px;height:110px;padding:10px 12px}
-  .col{flex:1;display:flex;flex-direction:column-reverse;gap:1px;height:100%}
-  .col i{display:block;width:100%;border-radius:2px;transform-origin:bottom;height:100%}
-  .col .ok{background:rgba(13,148,136,.7)}
-  .col .no{background:rgba(225,29,72,.75)}
+  .chartwrap{position:relative;height:150px;padding:6px}
+  .chartwrap canvas{width:100%;height:100%;display:block}
 
   .tenants{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
   .tenant{padding:16px 18px;border-radius:16px}
@@ -170,9 +174,10 @@
   <header>
     <div class="brand"><img src="/logo.svg" onerror="this.style.display='none'" alt="LimitPlane logo">LIMIT<span class="p">PLANE</span>&nbsp;<span style="font-weight:400;color:var(--dim);font-size:14px">/ live dashboard</span></div>
     <div class="hright">
-      <div class="live glass"><span class="dot pulse" id="liveDot"></span><span id="liveTxt">connecting…</span></div>
+      <div class="statusbar glass" id="statusbar"><span class="ping"><i></i></span><span id="liveTxt">connecting…</span><span class="sep"></span><span class="transport" id="transport">boot</span></div>
       <button class="iconbtn" id="themeBtn" title="toggle theme">◐</button>
-      <div class="userchip glass" id="userchip" style="display:none"><b id="whoami"></b><span class="role" id="rolechip"></span><button onclick="doLogout()">logout</button></div>
+      <a class="iconbtn" href="/admin" title="organizations admin">⌘</a>
+      <div class="userchip glass" id="userchip" style="display:none"><span class="avatar" id="avatar"></span><b id="whoami"></b><span class="role" id="rolechip"></span><button onclick="doLogout()">logout</button></div>
     </div>
   </header>
 
@@ -192,7 +197,7 @@
 
   <div class="panel glass">
     <h2>Traffic <span>last 60 seconds · green allowed / red blocked</span></h2>
-    <div class="chart neo-in" id="chart"></div>
+    <div class="chartwrap neo-in"><canvas id="chartCanvas"></canvas></div>
   </div>
 
   <div class="panel glass" id="addPanel" style="display:none">
@@ -243,6 +248,7 @@
   document.getElementById("themeBtn").onclick = () => {
     rootEl.dataset.theme = rootEl.dataset.theme === "dark" ? "light" : "dark";
     localStorage.setItem("lp_theme", rootEl.dataset.theme);
+    drawChart(lastSeries); // chart colors come from the theme vars
   };
 
   // ---------- two homes, one file ----------
@@ -285,7 +291,9 @@
   function enterUi(){
     if (PROXY) return;
     $("userchip").style.display = "flex";
-    $("whoami").textContent = (localStorage.getItem("lp_user") ?? "user").split("@")[0];
+    const email = localStorage.getItem("lp_user") ?? "user";
+    $("whoami").textContent = email.split("@")[0];
+    $("avatar").textContent = email[0].toUpperCase();
     const rc = $("rolechip"); rc.textContent = role; rc.className = "role " + role;
     if (role === "admin") $("addPanel").style.display = "block"; // viewers watch
   }
@@ -311,11 +319,7 @@
     $("kBans").textContent = s.tenants.filter(t => t.bannedMs > 0).length;
     $("kUp").innerHTML = ago(s.uptimeMs) + "<small></small>";
 
-    const peak = Math.max(1, ...s.series.map(b => b.allowed + b.blocked));
-    $("chart").innerHTML = s.series.map(b => `<div class="col">
-        <i class="ok" style="transform:scaleY(${(b.allowed/peak).toFixed(3)})"></i>
-        <i class="no" style="transform:scaleY(${(b.blocked/peak).toFixed(3)})"></i>
-      </div>`).join("");
+    drawChart(s.series);
 
     if (s.tenants.length){
       const canManage = !PROXY && role === "admin";
@@ -354,16 +358,102 @@
       </div>`).join(""); }
 
   // ---------- real-time: SSE first, polling as fallback ----------
-  let es = null, pollTimer = null;
-  function connectLive(){
-    if (PROXY || !token || es) return;
-    es = new EventSource(`/v1/admin/live?token=${encodeURIComponent(token)}`);
-    es.addEventListener("stats", e => { paintStats(JSON.parse(e.data)); setLive("live · SSE push"); });
-    es.addEventListener("decision", e => { feedRows.unshift(JSON.parse(e.data)); if (feedRows.length > 30) feedRows.pop(); paintFeed(); });
-    es.addEventListener("action", e => { actRows.unshift(JSON.parse(e.data)); if (actRows.length > 12) actRows.pop(); paintActs(); });
-    es.onerror = () => setLive("reconnecting…", true); // EventSource retries itself
+  let ws = null, es = null, pollTimer = null;
+  function onLiveMsg(type, data){
+    if (type === "stats") paintStats(data);
+    if (type === "decision"){ feedRows.unshift(data); if (feedRows.length > 30) feedRows.pop(); paintFeed(); }
+    if (type === "action"){ actRows.unshift(data); if (actRows.length > 12) actRows.pop(); paintActs(); }
+    if (type === "action_note"){ // the Groq note arrives seconds after its action
+      const a = actRows.find(x => x.at === data.at && x.type === data.type);
+      if (a){ a.aiNote = data.aiNote; paintActs(); }
+    }
   }
-  function setLive(msg, err){ $("liveDot").className = err ? "dot err" : "dot pulse"; $("liveTxt").textContent = msg; }
+  function connectLive(){ if (!PROXY && token) startWs(); }
+  function startWs(){
+    let opened = false;
+    try{
+      ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+    }catch{ return startSse(); }
+    ws.onopen = () => { opened = true; setLive("live", false, "websocket"); };
+    ws.onmessage = (m) => { const { type, data } = JSON.parse(m.data); onLiveMsg(type, data); };
+    ws.onclose = () => { ws = null; opened ? setTimeout(startWs, 1500) : startSse(); }; // retry, or fall back
+  }
+  function startSse(){
+    if (es) return;
+    es = new EventSource(`/v1/admin/live?token=${encodeURIComponent(token)}`);
+    for (const t of ["stats", "decision", "action", "action_note"]){
+      es.addEventListener(t, e => { onLiveMsg(t, JSON.parse(e.data)); if (t === "stats") setLive("live", false, "sse"); });
+    }
+    es.onerror = () => setLive("reconnecting…", true);
+  }
+  function setLive(msg, err, transport){
+    $("statusbar").classList.toggle("err", !!err);
+    $("liveTxt").textContent = msg;
+    if (transport) $("transport").textContent = transport;
+  }
+
+  // ---------- the traffic chart: smooth gradient area on canvas ----------
+  let lastSeries = [];
+  function hexA(hex, a){ // "#rrggbb" -> rgba(): canvas gradients need alpha stops
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function drawChart(series){
+    if (!series?.length) return;
+    lastSeries = series;
+    const c = $("chartCanvas"), ctx = c.getContext("2d");
+    const dpr = devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+    c.width = W * dpr; c.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const css = getComputedStyle(rootEl);
+    const teal = css.getPropertyValue("--teal").trim(), rose = css.getPropertyValue("--rose").trim(), faint = css.getPropertyValue("--faint").trim();
+    const pad = { l: 6, r: 6, t: 16, b: 16 }, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const totals = series.map(b => b.allowed + b.blocked), blocked = series.map(b => b.blocked);
+    const peak = Math.max(4, ...totals);
+    const X = i => pad.l + iw * (i / (series.length - 1));
+    const Y = v => pad.t + ih * (1 - v / peak);
+
+    ctx.strokeStyle = faint; ctx.globalAlpha = .3; ctx.setLineDash([2, 6]); ctx.lineWidth = 1;
+    for (let g = 1; g <= 3; g++){ const y = pad.t + ih * g / 4; ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke(); }
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+    function smooth(vals){ // midpoint-quadratic: bar data reads as a calm wave
+      ctx.beginPath();
+      vals.forEach((v, i) => {
+        const x = X(i), y = Y(v);
+        if (i === 0) return ctx.moveTo(x, y);
+        const px = X(i - 1), py = Y(vals[i - 1]);
+        ctx.quadraticCurveTo(px, py, (px + x) / 2, (py + y) / 2);
+      });
+      ctx.lineTo(X(vals.length - 1), Y(vals.at(-1)));
+    }
+    function areaFill(vals, color, top, bottom){
+      smooth(vals);
+      ctx.lineTo(X(vals.length - 1), H - pad.b); ctx.lineTo(pad.l, H - pad.b); ctx.closePath();
+      const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
+      grad.addColorStop(0, hexA(color, top)); grad.addColorStop(1, hexA(color, bottom));
+      ctx.fillStyle = grad; ctx.fill();
+    }
+
+    areaFill(totals, teal, .32, .02); // allowed+blocked envelope
+    smooth(totals); ctx.strokeStyle = teal; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke();
+    if (blocked.some(v => v > 0)){
+      areaFill(blocked, rose, .45, .04); // the blocked layer rises from the floor
+      smooth(blocked); ctx.strokeStyle = hexA(rose, .9); ctx.lineWidth = 1.5; ctx.stroke();
+    }
+    // live tip: a solid dot with a soft ring, no blur tricks
+    const tx = X(totals.length - 1), ty = Y(totals.at(-1));
+    ctx.beginPath(); ctx.arc(tx, ty, 3, 0, 7); ctx.fillStyle = teal; ctx.fill();
+    ctx.beginPath(); ctx.arc(tx, ty, 6.5, 0, 7); ctx.strokeStyle = hexA(teal, .35); ctx.lineWidth = 2; ctx.stroke();
+
+    ctx.font = "10px ui-monospace,monospace"; ctx.fillStyle = faint;
+    ctx.fillText("60s ago", pad.l + 2, H - 4);
+    const nowLbl = "now"; ctx.fillText(nowLbl, W - pad.r - ctx.measureText(nowLbl).width - 2, H - 4);
+    const rate = `${totals.at(-1)} req/s`; ctx.fillStyle = teal;
+    ctx.fillText(rate, W - pad.r - ctx.measureText(rate).width - 2, pad.t - 5);
+  }
+  addEventListener("resize", () => drawChart(lastSeries));
 
   async function tick(){ // fallback + initial hydrate (proxy mode polls forever)
     if (!PROXY && !token) return;
@@ -372,7 +462,7 @@
       paintStats(stats);
       feedRows.length = 0; feedRows.push(...audit); paintFeed();
       const list = acts.actions ?? acts; actRows.length = 0; actRows.push(...list); paintActs();
-      if (PROXY) setLive("live · polling 1.5s");
+      if (PROXY) setLive("live", false, "polling");
     }catch{ setLive(PROXY && !adminKey ? "enter admin key above" : "gateway unreachable", true); }
   }
   if (PROXY){ tick(); pollTimer = setInterval(tick, 1500); }

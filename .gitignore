@@ -4,3 +4,4 @@ node_modules/
 site/.vercel/
 .env
 .tenants.json
+.orgs.json

@@ -28,6 +28,7 @@ export function createAutomations({
   stormWindowMs = 60_000, // ...within this window...
   cooldownMs = 300_000, // ...earn this ban (5 min)
   onAction, // optional hook: gets every action (for tests / metrics)
+  onNote, // optional hook: fires when an action's AI note arrives (later, async)
 } = {}) {
   const actions = []; // everything the autopilot has done, newest last
   const firedOnce = new Set(); // dedup: "tenant:month:rule" fired already
@@ -54,6 +55,7 @@ export function createAutomations({
     const notify = async () => {
       if (explainer) {
         record.aiNote = await explainer.explain(record, getRecentEvents());
+        if (onNote) onNote(record); // dashboards can update the entry live
       }
       if (alertWebhookUrl) {
         await fetchImpl(alertWebhookUrl, {

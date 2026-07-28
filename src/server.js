@@ -17,14 +17,17 @@ import { readFileSync } from "node:fs";
 import { createLimitPlane } from "./gateway/limitPlane.js";
 import { createAutomations } from "./gateway/automations.js";
 import { createStats } from "./gateway/stats.js";
+import { createWsHub } from "./gateway/wsHub.js";
 import { createExplainer } from "./ai/aiExplainer.js";
 import { classifyText } from "./demo/nsfwStub.js";
 import { createBilling, TenantStore, PLANS } from "./billing/stripeBilling.js";
-import { createAuth } from "./auth/jwt.js";
+import { createAuth, sign } from "./auth/jwt.js";
+import { OrgStore } from "./gateway/orgStore.js";
 import { randomBytes } from "node:crypto";
 
 // The dashboard is one self-contained HTML file, read once at boot.
 const dashboardHtml = readFileSync(new URL("./dashboard/dashboard.html", import.meta.url), "utf8");
+const adminHtml = readFileSync(new URL("./dashboard/admin.html", import.meta.url), "utf8");
 const logoSvg = readFileSync(new URL("../LimitPlane_Logo.svg", import.meta.url), "utf8");
 
 // ---- Policy: tiers mirror the plan catalog so billing and limiting agree ----
@@ -55,7 +58,8 @@ const automations = createAutomations({
   alertWebhookUrl: process.env.ALERT_WEBHOOK_URL, // e.g. a Slack webhook
   explainer,
   getRecentEvents: () => lp.audit.recent(10), // audit context for the AI
-  onAction: (a) => sseBroadcast("action", a), // autopilot panel updates live
+  onAction: (a) => push("action", a), // autopilot panel updates live
+  onNote: (a) => push("action_note", a), // the Groq note streams in when ready
 });
 const stats = createStats(); // live counters for the dashboard
 
@@ -70,8 +74,21 @@ function sseBroadcast(type, data) {
   const frame = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const client of sseClients) client.write(frame);
 }
+
+// WebSocket hub: same events, a real two-way socket. Token rides the query
+// string of the upgrade request; the JWT guard decides who gets a socket.
+const wsHub = createWsHub({
+  authorize: (req, url) =>
+    auth.guard({ headers: { authorization: `Bearer ${url.searchParams.get("token")}` } }, ["admin", "viewer"]),
+});
+
+// One voice, two wires: everything real-time goes out over WS AND SSE.
+function push(type, data) {
+  wsHub.broadcast(type, data);
+  sseBroadcast(type, data);
+}
 setInterval(() => {
-  sseBroadcast("stats", stats.snapshot({ banCheck: automations.banRemainingMs }));
+  push("stats", stats.snapshot({ banCheck: automations.banRemainingMs }));
 }, 2000);
 
 const lp = createLimitPlane({
@@ -79,7 +96,7 @@ const lp = createLimitPlane({
   automations,
   onDecision: (e) => {
     stats.onDecision(e);
-    sseBroadcast("decision", e); // live feed row, instantly
+    push("decision", e); // live feed row, instantly
   },
 });
 
@@ -87,19 +104,40 @@ const lp = createLimitPlane({
 // admin: everything. viewer: read-only dashboard data. Secret from env in
 // prod; a random one per boot otherwise (restarting logs everyone out —
 // correct default for a demo, never a hardcoded secret in the repo).
+const JWT_SECRET = process.env.JWT_SECRET ?? randomBytes(32).toString("hex");
 const auth = createAuth({
-  secret: process.env.JWT_SECRET ?? randomBytes(32).toString("hex"),
+  secret: JWT_SECRET,
   users: {
     "demo@limitplane.dev": { password: process.env.DASH_ADMIN_PASSWORD ?? "demo123", role: "admin" },
     "viewer@limitplane.dev": { password: process.env.DASH_VIEWER_PASSWORD ?? "viewer123", role: "viewer" },
   },
 });
 
+// ---- Organizations: the Vercel-shaped hierarchy -------------------------------
+// platform (superadmin) -> orgs -> members (owner/admin/viewer) -> sites.
+// Org members log in like anyone else; their JWT role is "user" and what
+// they can SEE is resolved fresh per request from the org directory.
+const orgStore = new OrgStore({ file: new URL("../.orgs.json", import.meta.url).pathname });
+if (!orgStore.data.orgs["org_anshu-labs"]) {
+  orgStore.createOrg("Anshu Labs", "demo@limitplane.dev"); // default org, platform admin owns it
+}
+
+// Can this user manage the given org? (platform admin manages everything)
+function canManageOrg(claims, orgId) {
+  if (claims.role === "admin") return true;
+  return ["owner", "admin"].includes(orgStore.roleIn(orgId, claims.sub));
+}
+
 // ---- Billing: live if env keys are set, honest demo mode if not -------------
 const tenantStore = new TenantStore({
   tenants,
   file: process.env.TENANTS_FILE ?? new URL("../.tenants.json", import.meta.url).pathname, // manual adds survive restarts
 });
+// Adopt orphans AFTER the tenant file has loaded — sites connected before the
+// org layer existed land in the default org instead of floating ownerless.
+for (const t of Object.values(tenants)) {
+  if (!orgStore.orgOf(t.tenantId)) orgStore.addSite("org_anshu-labs", t.tenantId);
+}
 const billing = createBilling({
   secretKey: process.env.STRIPE_SECRET_KEY,
   webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
@@ -130,6 +168,9 @@ function parseJson(raw) {
 function sendJson(res, statusCode, body) {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "application/json");
+  // Auth still gates everything; CORS just lets the HOSTED dashboard talk to
+  // a locally running gateway (its "real live mode" bridge).
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.end(JSON.stringify(body, null, 2));
 }
 
@@ -177,10 +218,14 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
-  // ---- The live dashboard (and its logo) ------------------------------------
+  // ---- The live dashboard, the admin panel, and the logo ---------------------
   if (route === "/dashboard" || route === "/") {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.end(dashboardHtml);
+  }
+  if (route === "/admin") {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.end(adminHtml);
   }
   if (route === "/logo.svg") {
     res.setHeader("Content-Type", "image/svg+xml");
@@ -188,14 +233,71 @@ const server = http.createServer(async (req, res) => {
   }
   if (route === "/v1/auth/login" && req.method === "POST") {
     const body = parseJson(await readRawBody(req));
-    const session = auth.login(body.email, body.password);
+    // Platform staff first (demo admin/viewer), then org members from the directory.
+    let session = auth.login(body.email, body.password);
+    if (!session && orgStore.verifyUser(body.email, body.password)) {
+      session = { token: sign({ sub: body.email, role: "user" }, JWT_SECRET), role: "user", expiresInSec: 7200 };
+    }
     if (!session) return sendJson(res, 401, { error: "bad_credentials" });
-    return sendJson(res, 200, session); // { token, role, expiresInSec }
+    const orgs = orgStore.orgsFor(body.email).map((o) => ({ id: o.id, name: o.name, role: o.members[body.email] }));
+    return sendJson(res, 200, { ...session, orgs });
   }
 
   if (route === "/v1/admin/stats") {
-    if (!requireRole(req, res, ["admin", "viewer"])) return;
-    return sendJson(res, 200, stats.snapshot({ banCheck: automations.banRemainingMs }));
+    const claims = requireRole(req, res, ["admin", "viewer", "user"]);
+    if (!claims) return;
+    const snap = stats.snapshot({ banCheck: automations.banRemainingMs });
+    // Org members see ONLY their org's sites; staff see the whole platform.
+    if (claims.role === "user") {
+      const visible = orgStore.visibleTenantIds(claims.sub);
+      snap.tenants = snap.tenants.filter((t) => visible.has(t.tenantId));
+    }
+    snap.tenants = snap.tenants.map((t) => ({ ...t, org: orgStore.orgOf(t.tenantId)?.name ?? null }));
+    return sendJson(res, 200, snap);
+  }
+
+  // ---- Organizations API ------------------------------------------------------
+  if (route === "/v1/admin/orgs" && req.method === "GET") {
+    const claims = requireRole(req, res, ["admin", "viewer", "user"]);
+    if (!claims) return;
+    if (claims.role === "admin" || claims.role === "viewer") {
+      return sendJson(res, 200, { platform: true, orgs: orgStore.summary() });
+    }
+    const mine = orgStore.orgsFor(claims.sub).map((o) => ({
+      id: o.id, name: o.name, members: o.members, sites: o.sites, role: o.members[claims.sub],
+    }));
+    return sendJson(res, 200, { platform: false, orgs: mine });
+  }
+  if (route === "/v1/admin/orgs" && req.method === "POST") {
+    const claims = requireRole(req, res, ["admin", "user"]);
+    if (!claims) return;
+    const body = parseJson(await readRawBody(req));
+    if (!body.name?.trim()) return sendJson(res, 400, { error: "name required" });
+    const org = orgStore.createOrg(body.name.trim(), claims.sub);
+    if (!org) return sendJson(res, 409, { error: "org_exists" });
+    return sendJson(res, 201, org);
+  }
+  if (route === "/v1/admin/orgs/members" && req.method === "POST") {
+    const claims = requireRole(req, res, ["admin", "user"]);
+    if (!claims) return;
+    const body = parseJson(await readRawBody(req));
+    if (!canManageOrg(claims, body.orgId)) return sendJson(res, 403, { error: "not_your_org" });
+    if (!body.email || !body.role) return sendJson(res, 400, { error: "email and role required" });
+    if (!orgStore.data.users[body.email] && body.email !== "demo@limitplane.dev") {
+      if (!body.password) return sendJson(res, 400, { error: "password required for a new user" });
+      orgStore.createUser(body.email, body.password); // the "invite": account is born here
+    }
+    const org = orgStore.addMember(body.orgId, body.email, body.role);
+    if (!org) return sendJson(res, 400, { error: "bad_org_or_role" });
+    return sendJson(res, 200, { org: org.id, members: org.members });
+  }
+  if (route === "/v1/admin/orgs/members/remove" && req.method === "POST") {
+    const claims = requireRole(req, res, ["admin", "user"]);
+    if (!claims) return;
+    const body = parseJson(await readRawBody(req));
+    if (!canManageOrg(claims, body.orgId)) return sendJson(res, 403, { error: "not_your_org" });
+    const ok = orgStore.removeMember(body.orgId, body.email);
+    return sendJson(res, ok ? 200 : 400, ok ? { removed: body.email } : { error: "cannot_remove", message: "Unknown member, or the last owner." });
   }
 
   // The real-time wire. EventSource can't set headers, so the JWT rides the
@@ -229,10 +331,13 @@ const server = http.createServer(async (req, res) => {
   }
   // ---- Manual site onboarding (admin): the "connect your site" flow ---------
   if (route === "/v1/admin/sites" && req.method === "POST") {
-    const claims = requireRole(req, res, ["admin"]);
+    const claims = requireRole(req, res, ["admin", "user"]);
     if (!claims) return;
     const body = parseJson(await readRawBody(req));
     if (!body.name) return sendJson(res, 400, { error: "name required", message: "e.g. visualise.vercel.app" });
+    // Every site lives under an org; you can only connect into orgs you manage.
+    const orgId = body.orgId ?? (claims.role === "admin" ? "org_anshu-labs" : orgStore.orgsFor(claims.sub)[0]?.id);
+    if (!orgId || !canManageOrg(claims, orgId)) return sendJson(res, 403, { error: "not_your_org" });
     const tier = body.tier ?? "free";
     if (!policy.tiers[tier]) return sendJson(res, 400, { error: "unknown_tier" });
     if (Object.values(tenants).some((t) => t.tenantId === body.name)) {
@@ -241,6 +346,7 @@ const server = http.createServer(async (req, res) => {
     // The key IS the site's identity — random unless the caller brings one.
     const apiKey = body.apiKey ?? `lp_${randomBytes(9).toString("hex")}`;
     tenantStore.setTier(apiKey, tier, body.name);
+    orgStore.addSite(orgId, body.name);
     return sendJson(res, 201, {
       site: body.name,
       tier,
@@ -252,10 +358,15 @@ const server = http.createServer(async (req, res) => {
     });
   }
   if (route === "/v1/admin/sites/remove" && req.method === "POST") {
-    const claims = requireRole(req, res, ["admin"]);
+    const claims = requireRole(req, res, ["admin", "user"]);
     if (!claims) return;
     const body = parseJson(await readRawBody(req));
     if (!body.tenantId) return sendJson(res, 400, { error: "tenantId required" });
+    const owningOrg = orgStore.orgOf(body.tenantId);
+    // No owning org = platform staff only; owned = that org's managers only.
+    const allowed = owningOrg ? canManageOrg(claims, owningOrg.id) : claims.role === "admin";
+    if (!allowed) return sendJson(res, 403, { error: "not_your_org" });
+    orgStore.removeSite(body.tenantId); // out of the org
     const removed = tenantStore.removeByTenantId(body.tenantId); // keys gone
     stats.forget(body.tenantId); // card gone
     if (automations.banRemainingMs(body.tenantId) > 0) automations.unban(body.tenantId, claims.sub); // no ghost bans
@@ -337,10 +448,16 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, outcome.handled ? 200 : 400, outcome);
   }
 
-  // Admin peek at the diary — read access for both roles.
+  // Admin peek at the diary — org members see only their own sites' events.
   if (route === "/v1/admin/audit") {
-    if (!requireRole(req, res, ["admin", "viewer"])) return;
-    return sendJson(res, 200, lp.audit.recent(20));
+    const claims = requireRole(req, res, ["admin", "viewer", "user"]);
+    if (!claims) return;
+    let events = lp.audit.recent(20);
+    if (claims.role === "user") {
+      const visible = orgStore.visibleTenantIds(claims.sub);
+      events = events.filter((e) => visible.has(e.tenantId));
+    }
+    return sendJson(res, 200, events);
   }
 
   // What has the autopilot DONE? (alerts, nudges, cooldowns + AI notes)
@@ -386,6 +503,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   sendJson(res, 404, { error: "not_found" });
+});
+
+// The WebSocket upgrade: /ws?token=<jwt> becomes a live two-way socket.
+server.on("upgrade", (req, socket) => {
+  if (!req.url?.startsWith("/ws")) return socket.destroy();
+  wsHub.handleUpgrade(req, socket);
 });
 
 const PORT = process.env.PORT ?? 3000;
