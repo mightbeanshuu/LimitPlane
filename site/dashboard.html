@@ -164,7 +164,7 @@
     </div>
   </header>
 
-  <div class="banner glass">Connected sites are <b>Anshu's real deployed projects</b>; their traffic here is a labeled demo replay driven by the same token-bucket, monthly-quota and autopilot code the gateway runs server-side. Wire a site for real with <a href="https://github.com/mightbeanshuu/LimitPlane">one npx command</a>.</div>
+  <div class="banner glass"><b>visualise.vercel.app is genuinely connected</b>: its production pages carry a LimitPlane beacon reporting page views to the gateway. This hosted demo replays traffic through the same algorithms; run the gateway locally (<a href="https://github.com/mightbeanshuu/LimitPlane">npm start</a>) to watch the real hits arrive over SSE.</div>
 
   <div class="kpis">
     <div class="kpi neo"><div class="lbl">Total checks</div><div class="val" id="kChecks">0</div></div>
@@ -269,12 +269,9 @@ const COST = { light: 1, standard: 2, heavy: 5 };
 /* Anshu's real deployed projects as the connected sites. Traffic replay is
    seeded mid-month so the meters tell a story from the first second. */
 const SITES = [
-  { id: "dormdoc.vercel.app", note: "auth: supabase login/logout", tier: "pro", seedPct: .38, rps: .9, heavy: .25, route: "/api/auth" },
-  { id: "visualise.vercel.app", note: "auth: supabase gate", tier: "free", seedPct: .86, rps: .7, heavy: .2, route: "/api/progress" },
-  { id: "parkpulse-six.vercel.app", note: "enforcement engine", tier: "enterprise", seedPct: .21, rps: 1.5, heavy: .45, route: "/api/priority-scan" },
-  { id: "murmur (agent swarm)", note: "orchestrator", tier: "pro", seedPct: .55, rps: .8, heavy: .5, route: "/api/agents/run" },
-  { id: "bellwether (signals)", note: "trading CLI", tier: "free", seedPct: .42, rps: .5, heavy: .3, route: "/api/regime" },
-  { id: "smart-reco-engine", note: "MERN team project", tier: "free", seedPct: .63, rps: .6, heavy: .35, route: "/api/recommend" },
+  // The one real connected site: visualise.vercel.app carries a LimitPlane
+  // beacon in production (auth.js) reporting page views to a local gateway.
+  { id: "visualise.vercel.app", note: "beacon live in prod · pages report to the gateway", tier: "pro", seedPct: .12, rps: .8, heavy: .2, route: "/graphs/" },
 ];
 const state = SITES.map(s => ({
   ...s,

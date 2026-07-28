@@ -61,6 +61,19 @@ export class TenantStore {
     if (this.file) writeFileSync(this.file, JSON.stringify(this.tenants, null, 2)); // persist
     return this.tenants[apiKey];
   }
+
+  // Offboard a site: delete every key that maps to this tenant id.
+  removeByTenantId(tenantId) {
+    let removed = 0;
+    for (const key of Object.keys(this.tenants)) {
+      if (this.tenants[key].tenantId === tenantId) {
+        delete this.tenants[key];
+        removed++;
+      }
+    }
+    if (removed && this.file) writeFileSync(this.file, JSON.stringify(this.tenants, null, 2));
+    return removed;
+  }
 }
 
 export function createBilling({

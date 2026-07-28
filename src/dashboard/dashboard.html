@@ -122,6 +122,16 @@
   .btn.storm{color:var(--rose)} .btn.up{color:var(--sky)}
   .toggle{display:flex;align-items:center;gap:9px;font:12px var(--mono);color:var(--dim);cursor:pointer;padding:10px 14px}
   .empty{color:var(--faint);font:12px var(--mono);padding:14px}
+  .addsite{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .addsite input,.addsite select{border:none;font:13px var(--mono);color:var(--ink);padding:12px 14px;border-radius:12px;background:var(--bg);outline:none;
+    box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+  .addsite input{flex:1;min-width:220px}
+  .snippet{margin-top:14px;display:none}
+  .snippet .code{position:relative;background:#0a0f1d;border-radius:12px;margin-top:8px}
+  .snippet pre{padding:13px 15px;font:12px/1.6 var(--mono);color:#e2e8f0;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
+  .snippet .lbl{font:11px var(--mono);color:var(--dim)}
+  .snippet .copy{position:absolute;top:8px;right:8px;font:11px var(--mono);color:#93a0b6;background:#111a2e;border:1px solid #243349;border-radius:6px;padding:5px 10px;cursor:pointer}
+  .mgmt .rmb{color:var(--faint)}
   .keybox{display:none;margin-bottom:18px;padding:14px 18px;gap:10px;align-items:center}
   .keybox input{flex:1;border:none;background:transparent;font:13px var(--mono);color:var(--ink);outline:none;padding:10px 12px}
 
@@ -185,9 +195,22 @@
     <div class="chart neo-in" id="chart"></div>
   </div>
 
+  <div class="panel glass" id="addPanel" style="display:none">
+    <h2>Add a site <span>generates an API key + a beacon snippet to paste into the site</span></h2>
+    <div class="addsite">
+      <input id="siteName" placeholder="site name, e.g. visualise.vercel.app">
+      <select id="siteTier"><option>free</option><option>pro</option><option>enterprise</option></select>
+      <button class="btn up" onclick="addSite()">Connect site</button>
+    </div>
+    <div class="snippet" id="snippet">
+      <span class="lbl" id="snipLbl"></span>
+      <div class="code"><pre id="snipCode"></pre><button class="copy" onclick="copySnip()">copy</button></div>
+    </div>
+  </div>
+
   <div class="panel glass">
-    <h2>Connected sites <span id="mgmtHint">admin can re-tier, ban, unban — live</span></h2>
-    <div class="tenants" id="tenants"><div class="empty">No traffic yet. Send some below.</div></div>
+    <h2>Connected sites <span id="mgmtHint">admin can re-tier, ban, unban, remove — live</span></h2>
+    <div class="tenants" id="tenants"><div class="empty">No sites connected yet. Add one above; anonymous visitors appear here too once traffic flows.</div></div>
   </div>
 
   <div class="grid">
@@ -204,12 +227,10 @@
   <div class="panel glass" id="trafficPanel">
     <h2>Generate traffic <span>hit the real endpoints of this gateway</span></h2>
     <div class="controls">
-      <button class="btn" onclick="hit('demo-free-key','/v1/demo/ping')">Light ping<small>free tenant · 1 unit</small></button>
-      <button class="btn" onclick="scan('demo-free-key')">Heavy AI scan<small>free tenant · 5 units</small></button>
-      <button class="btn" onclick="scan('demo-pro-key')">Heavy AI scan<small>pro tenant · 5 units</small></button>
-      <button class="btn storm" onclick="storm()">Simulate retry-storm<small>12 rapid calls, no key → autopilot bans</small></button>
-      <button class="btn up" id="upgradeBtn" onclick="upgrade()">Upgrade free → pro<small>billing simulate = webhook flow (admin)</small></button>
-      <label class="toggle neo"><input type="checkbox" id="autoT"> auto traffic</label>
+      <button class="btn" onclick="hit(null,'/v1/demo/ping')">Anonymous ping<small>no key → anon free tier by IP · 1 unit</small></button>
+      <button class="btn" onclick="scan(null)">Anonymous heavy scan<small>5 units</small></button>
+      <button class="btn storm" onclick="storm()">Simulate retry-storm<small>12 rapid calls → autopilot bans</small></button>
+      <label class="toggle neo"><input type="checkbox" id="autoT"> auto anon traffic</label>
     </div>
   </div>
 
@@ -266,7 +287,7 @@
     $("userchip").style.display = "flex";
     $("whoami").textContent = (localStorage.getItem("lp_user") ?? "user").split("@")[0];
     const rc = $("rolechip"); rc.textContent = role; rc.className = "role " + role;
-    if (role !== "admin") $("upgradeBtn").style.display = "none"; // viewers watch
+    if (role === "admin") $("addPanel").style.display = "block"; // viewers watch
   }
   $("lPass")?.addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
 
@@ -313,7 +334,8 @@
               : `<button class="banb" onclick="mgmt('ban','${t.tenantId}')">ban 60s</button>`}
             ${isAnon ? "" : `<select onchange="setTier('${t.tenantId}', this.value)">
               ${["free","pro","enterprise"].map(x => `<option ${x === t.tier ? "selected" : ""}>${x}</option>`).join("")}
-            </select>`}
+            </select>
+            <button class="rmb" onclick="removeSite('${t.tenantId}')">remove</button>`}
           </div>` : ""}
         </div>`;
       }).join("");
@@ -366,19 +388,35 @@
       body: JSON.stringify({ tenantId, tier }) });
   }
 
+  // ---------- manual site onboarding ----------
+  let snipText = "";
+  async function addSite(){
+    const name = $("siteName").value.trim();
+    if (!name) return;
+    const r = await fetch("/v1/admin/sites", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+      body: JSON.stringify({ name, tier: $("siteTier").value }) });
+    const data = await r.json();
+    const box = $("snippet"); box.style.display = "block";
+    if (!r.ok){ $("snipLbl").textContent = `could not connect: ${data.error}`; $("snipCode").textContent = ""; return; }
+    snipText = data.beacon.replace("http://localhost:3000", location.origin); // snippet points at THIS gateway
+    $("snipLbl").textContent = `${data.site} connected on the ${data.tier} tier. API key: ${data.apiKey} — paste this into the site's pages (or its shared JS file):`;
+    $("snipCode").textContent = snipText;
+    $("siteName").value = "";
+  }
+  async function copySnip(){ await navigator.clipboard.writeText(snipText); }
+  async function removeSite(tenantId){
+    await fetch("/v1/admin/sites/remove", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+      body: JSON.stringify({ tenantId }) });
+  }
+
   // ---------- traffic generators ----------
   const hit = (key, path) => fetch(path, { headers: key ? { "x-api-key": key } : {} });
   const scan = key => fetch("/v1/demo/nsfw-check", { method: "POST", headers: { "content-type": "application/json", ...(key ? { "x-api-key": key } : {}) }, body: JSON.stringify({ text: "dashboard demo text" }) });
   async function storm(){ for (let i = 0; i < 12; i++) await scan(null); }
-  const upgrade = () => fetch("/v1/billing/simulate", { method: "POST", headers: { "content-type": "application/json", ...HDRS() }, body: JSON.stringify({ apiKey: "demo-free-key", plan: "pro" }) });
   setInterval(() => {
     if (!$("autoT").checked) return;
-    const roll = Math.random();
-    if (roll < 0.55) hit("demo-free-key", "/v1/demo/ping");
-    else if (roll < 0.8) scan("demo-pro-key");
-    else if (roll < 0.95) scan("demo-free-key");
-    else scan(null);
-  }, 700);
+    Math.random() < 0.75 ? hit(null, "/v1/demo/ping") : scan(null);
+  }, 900);
 </script>
 </body>
 </html>

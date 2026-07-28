@@ -70,5 +70,10 @@ export function createStats({ now = () => Date.now() } = {}) {
     return { startedAt, uptimeMs: now() - startedAt, totals, tenants, series };
   }
 
-  return { onDecision, snapshot };
+  // A removed site shouldn't haunt the dashboard with a stale card.
+  function forget(tenantId) {
+    return perTenant.delete(tenantId);
+  }
+
+  return { onDecision, snapshot, forget };
 }

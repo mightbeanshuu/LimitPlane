@@ -29,11 +29,9 @@ const logoSvg = readFileSync(new URL("../LimitPlane_Logo.svg", import.meta.url),
 
 // ---- Policy: tiers mirror the plan catalog so billing and limiting agree ----
 // capacity/refill = burst protection (seconds); monthlyQuota = the plan (month).
-const tenants = {
-  "demo-free-key": { tenantId: "acme-free", tier: "free" },
-  "demo-pro-key": { tenantId: "globex-pro", tier: "pro" },
-  "demo-ent-key": { tenantId: "initech-ent", tier: "enterprise" },
-};
+// Tenants start EMPTY: sites are onboarded manually from the dashboard
+// (POST /v1/admin/sites) and persisted to TENANTS_FILE across restarts.
+const tenants = {};
 
 const policy = {
   tiers: {
@@ -98,7 +96,10 @@ const auth = createAuth({
 });
 
 // ---- Billing: live if env keys are set, honest demo mode if not -------------
-const tenantStore = new TenantStore({ tenants, file: process.env.TENANTS_FILE });
+const tenantStore = new TenantStore({
+  tenants,
+  file: process.env.TENANTS_FILE ?? new URL("../.tenants.json", import.meta.url).pathname, // manual adds survive restarts
+});
 const billing = createBilling({
   secretKey: process.env.STRIPE_SECRET_KEY,
   webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
@@ -145,6 +146,32 @@ function requireRole(req, res, roles) {
 
 const server = http.createServer(async (req, res) => {
   const route = (req.url ?? "/").split("?")[0];
+
+  // ---- Beacon: how a real deployed site reports its traffic ------------------
+  // A one-line snippet on any page fires GET /b?k=<apiKey>&p=<path>. It's the
+  // classic analytics-pixel trick: a simple no-cors GET, so it works from any
+  // https site with zero CORS ceremony, and browsers treat localhost as a
+  // trustworthy origin. Every hit runs through the REAL limiter.
+  if (route === "/b") {
+    const params = new URL(req.url, "http://x").searchParams;
+    const path = (params.get("p") ?? "/").slice(0, 120); // real page path = real route
+    const decision = await lp.check({
+      apiKey: params.get("k") ?? undefined,
+      ip: req.socket?.remoteAddress,
+      route: path,
+    });
+    res.statusCode = decision.allowed ? 204 : 429;
+    res.setHeader("Access-Control-Allow-Origin", "*"); // pixel responses are public anyway
+    return res.end();
+  }
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Headers": "content-type,x-api-key,authorization",
+    });
+    return res.end();
+  }
 
   // ---- The live dashboard (and its logo) ------------------------------------
   if (route === "/dashboard" || route === "/") {
@@ -196,6 +223,39 @@ const server = http.createServer(async (req, res) => {
     if (!body.tenantId) return sendJson(res, 400, { error: "tenantId required" });
     return sendJson(res, 200, automations.unban(body.tenantId, claims.sub));
   }
+  // ---- Manual site onboarding (admin): the "connect your site" flow ---------
+  if (route === "/v1/admin/sites" && req.method === "POST") {
+    const claims = requireRole(req, res, ["admin"]);
+    if (!claims) return;
+    const body = parseJson(await readRawBody(req));
+    if (!body.name) return sendJson(res, 400, { error: "name required", message: "e.g. visualise.vercel.app" });
+    const tier = body.tier ?? "free";
+    if (!policy.tiers[tier]) return sendJson(res, 400, { error: "unknown_tier" });
+    if (Object.values(tenants).some((t) => t.tenantId === body.name)) {
+      return sendJson(res, 409, { error: "already_connected" });
+    }
+    // The key IS the site's identity — random unless the caller brings one.
+    const apiKey = body.apiKey ?? `lp_${randomBytes(9).toString("hex")}`;
+    tenantStore.setTier(apiKey, tier, body.name);
+    return sendJson(res, 201, {
+      site: body.name,
+      tier,
+      apiKey,
+      beacon: `<script>fetch("http://localhost:${PORT}/b?k=${apiKey}&p="+encodeURIComponent(location.pathname),{mode:"no-cors"}).catch(()=>{})</script>`,
+      note: "Paste the beacon into your site's pages (or a shared JS file). Every page view then flows through this gateway.",
+    });
+  }
+  if (route === "/v1/admin/sites/remove" && req.method === "POST") {
+    const claims = requireRole(req, res, ["admin"]);
+    if (!claims) return;
+    const body = parseJson(await readRawBody(req));
+    if (!body.tenantId) return sendJson(res, 400, { error: "tenantId required" });
+    const removed = tenantStore.removeByTenantId(body.tenantId); // keys gone
+    stats.forget(body.tenantId); // card gone
+    if (automations.banRemainingMs(body.tenantId) > 0) automations.unban(body.tenantId, claims.sub); // no ghost bans
+    return sendJson(res, 200, { removed, tenantId: body.tenantId });
+  }
+
   if (route === "/v1/admin/tenants" && req.method === "POST") {
     // Change a customer's tier live (the manual version of the Stripe flow).
     const claims = requireRole(req, res, ["admin"]);
@@ -327,5 +387,6 @@ server.listen(PORT, () => {
   console.log(`LimitPlane demo gateway on http://localhost:${PORT}`);
   console.log(`Live dashboard: http://localhost:${PORT}/dashboard`);
   console.log(`Billing: ${billing.liveMode ? "LIVE Stripe" : "demo mode (POST /v1/billing/simulate to flip tiers)"}`);
-  console.log(`Keys: demo-free-key | demo-pro-key | demo-ent-key (or none = anonymous free tier)`);
+  const connected = Object.values(tenants).map((t) => t.tenantId);
+  console.log(`Connected sites: ${connected.length ? connected.join(", ") : "none yet — add one from the dashboard (admin)"}`);
 });
