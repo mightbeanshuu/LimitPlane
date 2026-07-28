@@ -1,0 +1,18 @@
+# Render Blueprint — deploys the LimitPlane gateway as a real, always-on
+# Node process (something serverless platforms can't be: it holds in-memory
+# token buckets, WebSocket + SSE connections, and monthly meters).
+# Free tier note: the instance sleeps after ~15 min idle; first request
+# after that takes ~30-50s to wake. Disk is ephemeral (tenants re-seed).
+services:
+  - type: web
+    name: limitplane
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node src/server.js
+    healthCheckPath: /v1/billing/plans
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true # stable sessions across restarts
+      - key: GROQ_API_KEY
+        sync: false # paste at deploy time; never in the repo

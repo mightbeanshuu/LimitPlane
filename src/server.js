@@ -63,6 +63,34 @@ const automations = createAutomations({
 });
 const stats = createStats(); // live counters for the dashboard
 
+// ---- Visitors: unique IPs, geolocated for the live map ------------------------
+// Geo comes from ip-api.com (free, server-side, cached per IP). Private and
+// localhost addresses get labeled instead of looked up.
+const visitors = new Map(); // ip -> { count, lastSeen, city, country, lat, lon }
+function isPrivateIp(ip) {
+  return !ip || ip === "unknown" || /^(::1|::ffff:127\.|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::ffff:10\.|::ffff:192\.168\.|fe80|fc|fd)/.test(ip);
+}
+function trackVisitor(ip) {
+  if (!ip) return;
+  let v = visitors.get(ip);
+  if (!v) {
+    v = { ip, count: 0, geo: isPrivateIp(ip) ? "local" : "pending" };
+    visitors.set(ip, v);
+    if (visitors.size > 500) visitors.delete(visitors.keys().next().value); // ring-ish cap
+    if (v.geo === "pending") {
+      fetch(`http://ip-api.com/json/${ip}?fields=status,city,country,lat,lon`)
+        .then((r) => r.json())
+        .then((g) => {
+          if (g.status === "success") Object.assign(v, { city: g.city, country: g.country, lat: g.lat, lon: g.lon, geo: "ok" });
+          else v.geo = "unknown";
+        })
+        .catch(() => { v.geo = "unknown"; });
+    }
+  }
+  v.count += 1;
+  v.lastSeen = Date.now();
+}
+
 // ---- Real-time: Server-Sent Events ------------------------------------------
 // Every decision and autopilot action is PUSHED to connected dashboards the
 // millisecond it happens — no polling delay. SSE over plain node:http: one
@@ -96,6 +124,7 @@ const lp = createLimitPlane({
   automations,
   onDecision: (e) => {
     stats.onDecision(e);
+    trackVisitor(e.ip); // the map learns about every client
     push("decision", e); // live feed row, instantly
   },
 });
@@ -133,6 +162,11 @@ const tenantStore = new TenantStore({
   tenants,
   file: process.env.TENANTS_FILE ?? new URL("../.tenants.json", import.meta.url).pathname, // manual adds survive restarts
 });
+// Fresh container (Render free tier wipes disk on deploy): re-seed the one
+// production site so its beacons never go unclaimed.
+if (Object.keys(tenants).length === 0) {
+  tenantStore.setTier("lp_visualise_a91f3c", "pro", "visualise.vercel.app");
+}
 // Adopt orphans AFTER the tenant file has loaded — sites connected before the
 // org layer existed land in the default org instead of floating ownerless.
 for (const t of Object.values(tenants)) {
@@ -198,7 +232,7 @@ const server = http.createServer(async (req, res) => {
     const path = (params.get("p") ?? "/").slice(0, 120); // real page path = real route
     const decision = await lp.check({
       apiKey: params.get("k") ?? undefined,
-      ip: req.socket?.remoteAddress,
+      ip: (req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() || req.socket?.remoteAddress,
       route: path,
     });
     res.statusCode = decision.allowed ? 204 : 429;
@@ -253,6 +287,8 @@ const server = http.createServer(async (req, res) => {
       snap.tenants = snap.tenants.filter((t) => visible.has(t.tenantId));
     }
     snap.tenants = snap.tenants.map((t) => ({ ...t, org: orgStore.orgOf(t.tenantId)?.name ?? null }));
+    snap.visitors = [...visitors.values()];
+    snap.uniqueVisitors = visitors.size;
     return sendJson(res, 200, snap);
   }
 
@@ -307,7 +343,7 @@ const server = http.createServer(async (req, res) => {
     if (!auth.guard({ headers: { authorization: `Bearer ${token}` } }, ["admin", "viewer"])) {
       return sendJson(res, 401, { error: "unauthorized" });
     }
-    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "Access-Control-Allow-Origin": "*" });
     res.write(`event: stats\ndata: ${JSON.stringify(stats.snapshot({ banCheck: automations.banRemainingMs }))}\n\n`);
     sseClients.add(res);
     req.on("close", () => sseClients.delete(res)); // tab closed = client gone
@@ -464,6 +500,48 @@ const server = http.createServer(async (req, res) => {
   if (route === "/v1/admin/automations") {
     if (!requireRole(req, res, ["admin", "viewer"])) return;
     return sendJson(res, 200, { aiExplainer: explainer.liveMode ? "live" : "fallback", actions: automations.recent(20) });
+  }
+
+  // The ops chatbot: Groq answering questions grounded in LIVE gateway state.
+  if (route === "/v1/ai/chat" && req.method === "POST") {
+    const claims = requireRole(req, res, ["admin", "viewer", "user"]);
+    if (!claims) return;
+    if (!process.env.GROQ_API_KEY) return sendJson(res, 200, { reply: "AI chat is offline (no GROQ_API_KEY set on the server)." });
+    const body = parseJson(await readRawBody(req));
+    const history = (body.messages ?? []).slice(-8).map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: String(m.content).slice(0, 800),
+    }));
+    // Ground the model in what is ACTUALLY happening right now.
+    const snap = stats.snapshot({ banCheck: automations.banRemainingMs });
+    const context = {
+      totals: snap.totals,
+      uniqueVisitors: visitors.size,
+      tenants: snap.tenants.map((t) => ({ id: t.tenantId, tier: t.tier, ok: t.allowed, blocked: t.blocked, monthly: t.monthly, bannedMs: t.bannedMs })),
+      recentDecisions: lp.audit.recent(10),
+      autopilot: automations.recent(5),
+      plans: PLANS,
+    };
+    try {
+      const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          temperature: 0.4,
+          max_tokens: 300,
+          messages: [
+            { role: "system", content: "You are LimitPlane's ops assistant. Answer questions about this rate-limiting gateway using ONLY the live state JSON provided. Be concise and concrete (numbers, tenant names, reasons). If asked something the data cannot answer, say so plainly. No markdown headers." },
+            { role: "system", content: "LIVE STATE: " + JSON.stringify(context) },
+            ...history,
+          ],
+        }),
+      });
+      const d = await r.json();
+      return sendJson(res, 200, { reply: d.choices?.[0]?.message?.content?.trim() ?? "No answer." });
+    } catch {
+      return sendJson(res, 200, { reply: "AI chat hit a network error; try again." });
+    }
   }
 
   // On-demand explanation of the latest blocked request, from real facts.

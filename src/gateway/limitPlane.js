@@ -49,6 +49,7 @@ export function createLimitPlane({
         key: plan.key,
         route,
         tenantId,
+        ip,
         tier,
         costClass: plan.costClass,
         cost: plan.cost,
@@ -106,6 +107,7 @@ export function createLimitPlane({
       key: plan.key,
       route,
       tenantId,
+      ip,
       tier,
       costClass: plan.costClass,
       cost: plan.cost,
@@ -137,7 +139,8 @@ export function createLimitPlane({
   async function middleware(req, res, next) {
     const decision = await check({
       apiKey: req.headers["x-api-key"], // who they claim to be
-      ip: req.socket?.remoteAddress, // fallback identity for strangers
+      // behind a proxy (Render/Vercel) the real client is in x-forwarded-for
+      ip: (req.headers["x-forwarded-for"] ?? "").split(",")[0].trim() || req.socket?.remoteAddress,
       route: (req.url ?? "/").split("?")[0], // path only, no query string
     });
 
