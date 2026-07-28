@@ -169,6 +169,10 @@ const server = http.createServer(async (req, res) => {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
       "Access-Control-Allow-Headers": "content-type,x-api-key,authorization",
+      // Chrome sends a special preflight when a PUBLIC https site calls a
+      // PRIVATE address (localhost). Without this header it silently blocks
+      // the beacon — the classic "works in curl, dies in the browser" trap.
+      "Access-Control-Allow-Private-Network": "true",
     });
     return res.end();
   }
@@ -241,7 +245,9 @@ const server = http.createServer(async (req, res) => {
       site: body.name,
       tier,
       apiKey,
-      beacon: `<script>fetch("http://localhost:${PORT}/b?k=${apiKey}&p="+encodeURIComponent(location.pathname),{mode:"no-cors"}).catch(()=>{})</script>`,
+      // targetAddressSpace: Chrome gates public-site -> localhost behind a
+      // Local Network Access permission; untagged requests are dropped silently.
+      beacon: `<script>(function(){var u="http://localhost:${PORT}/b?k=${apiKey}&p="+encodeURIComponent(location.pathname);var f=function(o){return fetch(u,o)};try{f({mode:"no-cors",targetAddressSpace:"local"}).catch(function(){return f({mode:"no-cors",targetAddressSpace:"private"})}).catch(function(){return f({mode:"no-cors"})}).catch(function(){})}catch(e){try{f({mode:"no-cors"}).catch(function(){})}catch(e2){}}})()</script>`,
       note: "Paste the beacon into your site's pages (or a shared JS file). Every page view then flows through this gateway.",
     });
   }
