@@ -2,13 +2,14 @@
 
 ## Status
 - Repository created.
-- Implementation not started.
+- Reset to minimal session-wise learning mode.
+- Implementation removed temporarily so learner can rebuild it manually folder by folder.
 
 ## Project Goal
 Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, multiple algorithms, Docker, metrics, documentation, and load testing.
 
 ## Next Step
-- Define scope and architecture before writing code.
+- Teach session-wise project directions, then learner creates the first folder/file manually.
 
 ## 2026-06-30 21:43 IST - Setup
 - Command: `firecrawl search "Claude skills SKILL.md format project instructions Claude Code 2026" --limit 5 -o .firecrawl/claude-skills-format.json --json`
@@ -912,3 +913,156 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Dependencies changed: none
 - Learner stuck point: none
 - Revisit later: none
+
+## 2026-07-04 19:46 IST - Session State Reconstruction
+- Command: `pwd && rg --files -g 'sessions.md' -g 'progress.md' -g 'CLAUDE.md'`; `sed -n '1,260p' /Users/mac/.codex/skills/limitplane-tutor/SKILL.md`; `sed -n '1,260p' progress.md`; `ls -la`; `date '+%Y-%m-%d %H:%M %Z'`; `sed -n '260,620p' progress.md`; `rg --files .claude`; `git status --short`; `sed -n '620,980p' progress.md`; `find .claude -maxdepth 4 -type f -print`; `ls -la .claude`; `sed -n '980,1320p' progress.md`; `find .claude/skills -maxdepth 4 -type f -print`; `git log --oneline --decorate -5`; `git show f6f2589:sessions.md`; `git show f6f2589:CLAUDE.md`; `git show f6f2589:.claude/skills/tech-learning-tutor/SKILL.md`
+- Reason: Read skill instructions, current progress, current files, and historical tracker files before teaching the learner what Claude covered.
+- Result: Success; current repo had `progress.md` only, while historical Git state showed Session 1 and 2 were completed and the selected route was Basic to Interview.
+- Files changed: `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: User wants Claude's previous teaching explained step by step.
+- Revisit later: Generate or recreate missing revision PDF after the learner finishes a reviewed session.
+
+## 2026-07-04 19:55 IST - Project Scaffold
+- Command: `sed -n '1,260p' sessions.md`; `sed -n '1,220p' progress.md`; `find . -maxdepth 3 -type f -not -path './.git/*' -print`; `date '+%Y-%m-%d %H:%M %Z'`; `mkdir -p src/server src/middleware src/algorithms src/policies src/redis/lua src/metrics src/config src/errors src/types tests/unit tests/integration tests/concurrency docs/diagrams scripts load docker infra`; `find . -maxdepth 3 -type f -not -path './.git/*' -print | sort`; `git status --short`; `date '+%Y-%m-%d %H:%M %Z'`
+- Reason: Scaffold the LimitPlane folder structure before revising Sessions 1 and 2.
+- Result: Success; folders for server, middleware, algorithms, policies, Redis/Lua, metrics, config, errors, types, unit/integration/concurrency tests, docs, load testing, Docker, infra, and scripts were created.
+- Files changed: `README.md`, scaffold `.gitkeep` files, `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: none
+- Revisit later: Add `package.json`, TypeScript config, dependencies, and first implementation only after revision and guided coding starts.
+
+## 2026-07-04 20:23 IST - AI-Aware Project Upgrade
+- Command: `sed -n '1,260p' /Users/mac/.codex/skills/limitplane-tutor/SKILL.md`; `sed -n '1,260p' /Users/mac/.agents/skills/firecrawl-parse/SKILL.md`; `find /Users/mac/Desktop/LimitPlane /Users/mac/Desktop -maxdepth 2 -name 'DIP_Problem_statements_6th_sem.pdf' -print`; `sed -n '1,260p' sessions.md`; `find /Users/mac -name 'DIP_Problem_statements_6th_sem.pdf' -print` (stopped after broader search found enough and hit protected macOS folders); `find /Users/mac/Desktop -iname '*DIP*6th*sem*.pdf' -print`; `find /Users/mac/Downloads -iname '*.pdf' -maxdepth 2 -print`; `mkdir -p .firecrawl`; `firecrawl parse /Users/mac/Downloads/DIP_Problem_statements_6th_sem.pdf -o .firecrawl/dip_problem_statements_6th_sem.md`; `sed -n '1,240p' .firecrawl/dip_problem_statements_6th_sem.md`; `rg -n "AI|ML|Gen|generative|analytics|dashboard|monitor|security|web|system|cloud|API|data|IoT|health|education|traffic|prediction|recommend|automation" .firecrawl/dip_problem_statements_6th_sem.md`; `wc -l .firecrawl/dip_problem_statements_6th_sem.md`; `mkdir -p src/ai src/audit src/demo docs/session-notes`; `date '+%Y-%m-%d %H:%M %Z'`; `git status --short`; `find . -maxdepth 3 -type f -not -path './.git/*' -print | sort`; `sed -n '1,120p' .gitignore`; `tail -n 80 progress.md`
+- Reason: Inspect the DIP problem-statement PDF and upgrade LimitPlane with a feasible GenAI/AI-API angle before Session 3.
+- Result: Success; PDF parsed locally, NSFW Website Detection API identified as the closest fit, and project scope upgraded to an AI-aware distributed rate-limit gateway for expensive AI endpoints.
+- Files changed: `.gitignore`, `README.md`, `docs/project-upgrade.md`, `src/ai/.gitkeep`, `src/audit/.gitkeep`, `src/demo/.gitkeep`, `docs/session-notes/.gitkeep`, `sessions.md`, `progress.md`; local ignored parse output `.firecrawl/dip_problem_statements_6th_sem.md`
+- Dependencies changed: none
+- Learner stuck point: Learner answered the 429 checkpoint as user-notification focused; revisit that `429` also protects backend/database/AI cost before expensive work runs.
+- Revisit later: Add a real or mock GenAI adapter only after the fixed-window limiter and middleware are working.
+
+## 2026-07-04 20:36 IST - Session 3 Fixed-Window Implementation
+- Command: `find . -maxdepth 3 -type f -not -path './.git/*' -not -path './.firecrawl/*' -print | sort`; `sed -n '1,220p' sessions.md`; `date '+%Y-%m-%d %H:%M %Z'`; `npm test`; `node --version`; `date '+%Y-%m-%d %H:%M %Z'`
+- Reason: Start coding after the learner answered the Session 3 fixed-window checkpoint.
+- Result: Success; created a pure Node fixed-window limiter with per-key counters, window reset, block decision, retry-after metadata, and weighted AI request cost support. Unit tests passed: 5/5.
+- Files changed: `package.json`, `src/algorithms/fixedWindowLimiter.js`, `tests/unit/fixedWindowLimiter.test.js`, `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: Learner said fixed window "blocks when the count increases"; correction is that it blocks when the next request would exceed the configured limit.
+- Revisit later: Explain `Map`, constructor injection of `now`, and why in-memory breaks with multiple server replicas.
+
+## 2026-07-04 20:45 IST - Learner-Driven Coding Mode
+- Command: `sed -n '1,420p' /Users/mac/.codex/skills/limitplane-tutor/SKILL.md`; `sed -n '1,260p' sessions.md`; `tail -n 120 progress.md`; `sed -n '1,220p' src/algorithms/fixedWindowLimiter.js`; `date '+%Y-%m-%d %H:%M %Z'`
+- Reason: Switch to guided coding where the learner writes code first and the agent explains/reviews before taking over.
+- Result: Success; current fixed-window code reviewed for teaching context.
+- Files changed: `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: Learner wants code explained from zero and wants to write it personally.
+- Revisit later: Let learner write the next small test or implementation slice before agent edits code.
+
+## 2026-07-04 20:52 IST - Scaffold Cleanup for Teaching
+- Command: `sed -n '1,420p' /Users/mac/.codex/skills/limitplane-tutor/SKILL.md`; `find . -maxdepth 4 -type f -not -path './.git/*' -not -path './.firecrawl/*' -print | sort`; `sed -n '1,220p' README.md`; `date '+%Y-%m-%d %H:%M %Z'`; `find . -maxdepth 4 -type f -not -path './.git/*' -not -path './.firecrawl/*' -not -path './.claude/*' -print | sort`; `npm test`; `date '+%Y-%m-%d %H:%M %Z'`
+- Reason: Remove unused placeholder scaffolds and switch to session-wise teaching with only currently needed files.
+- Result: Success; placeholder scaffold files removed, README simplified, and tests still pass 5/5.
+- Files changed: `README.md`, removed unused `.gitkeep` files, `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: Learner found the previous scaffold and explanation unclear.
+- Revisit later: Create middleware, Redis, AI, metrics, Docker, and load-test folders only when those sessions start.
+
+## 2026-07-04 20:58 IST - Full Session-Wise Reset
+- Command: `find src tests docs -depth -type d -empty -delete`; `date '+%Y-%m-%d %H:%M %Z'`; `find . -maxdepth 4 -type f -not -path './.git/*' -not -path './.firecrawl/*' -not -path './.claude/*' -print | sort`; `git status --short --ignored`
+- Reason: Remove remaining implementation/docs/package files so the learner can rebuild the project manually session by session.
+- Result: Success; active files are now `.gitignore`, `sessions.md`, and `progress.md` only, with ignored `.claude/` and `.firecrawl/` local directories.
+- Files changed: Removed `README.md`, `docs/project-upgrade.md`, `package.json`, `src/algorithms/fixedWindowLimiter.js`, `tests/unit/fixedWindowLimiter.test.js`, empty source/test/doc folders; updated `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: Existing files made the flow confusing.
+- Revisit later: Recreate `package.json`, `src/algorithms/`, and `tests/unit/` only when the learner reaches those steps.
+
+## 2026-07-04 21:01 IST - Empty Folder Cleanup
+- Command: `sed -n '1,220p' /Users/mac/.codex/skills/limitplane-tutor/SKILL.md`; `find . -maxdepth 3 -type d -not -path './.git*' -not -path './.firecrawl*' -not -path './.claude*' -print | sort`; `find . -maxdepth 3 -type f -not -path './.git/*' -not -path './.firecrawl/*' -not -path './.claude/*' -print | sort`; `date '+%Y-%m-%d %H:%M %Z'`; `rmdir docker infra load scripts`; `find . -maxdepth 3 -type d -not -path './.git*' -not -path './.firecrawl*' -not -path './.claude*' -print | sort`; `date '+%Y-%m-%d %H:%M %Z'`
+- Reason: Remove remaining empty future-topic folders after the learner asked to remove Docker, infra, load, and related scaffolds.
+- Result: Success; visible project directories reduced to the root only.
+- Files changed: Removed empty directories `docker/`, `infra/`, `load/`, `scripts/`; updated `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: Future-topic folders were confusing before their sessions.
+- Revisit later: Recreate each folder only when the related session begins.
+
+## 2026-07-04 21:05 IST - Session 3A Part 1 Fixed-Window File
+- Command: `sed -n '1,120p' sessions.md`; `find . -maxdepth 3 -type f -not -path './.git/*' -not -path './.firecrawl/*' -not -path './.claude/*' -print | sort`; `date '+%Y-%m-%d %H:%M %Z'`; `mkdir -p src/algorithms`; `sed -n '1,120p' src/algorithms/fixedWindowLimiter.js`; `find . -maxdepth 4 -type f -not -path './.git/*' -not -path './.firecrawl/*' -not -path './.claude/*' -print | sort`; `date '+%Y-%m-%d %H:%M %Z'`
+- Reason: Start rebuilding the project one folder and one code block at a time.
+- Result: Success; created `src/algorithms/fixedWindowLimiter.js` with comments, exported class shell, constructor, and in-memory `Map`.
+- Files changed: `src/algorithms/fixedWindowLimiter.js`, `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: none
+- Revisit later: Add `check()` method only after learner says "write next part."
+
+## 2026-07-04 21:10 IST - Session 3A Part 2 Check Input Contract
+- Command: `sed -n '1,180p' src/algorithms/fixedWindowLimiter.js`; `date '+%Y-%m-%d %H:%M %Z'`
+- Reason: Add the next small code block for learner-guided fixed-window implementation.
+- Result: Success; added `check({ key, limit, windowMs, cost = 1 })` that returns the request rule fields as structured output.
+- Files changed: `src/algorithms/fixedWindowLimiter.js`, `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: Learner wants code blocks followed by expected output, inference, and notes.
+- Revisit later: Add current time, existing window lookup, and counting logic in separate steps.
+
+## 2026-07-04 21:13 IST - Session 3A Part 3 Clean Code and Window Lookup
+- Command: `sed -n '1,120p' src/algorithms/fixedWindowLimiter.js`; `date '+%Y-%m-%d %H:%M %Z'`
+- Reason: Remove excessive code comments and add the next fixed-window flow block.
+- Result: Success; source now has clean code with constructor time injection, in-memory map, current time capture, and current window lookup.
+- Files changed: `src/algorithms/fixedWindowLimiter.js`, `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: User prefers explanations in chat rather than many source comments.
+- Revisit later: Add new-window creation and counting logic next.
+
+## 2026-07-04 21:20 IST - Session 3A Part 4-5 Complete Algorithm, Test, npm setup
+- Command: `node --test tests/unit/fixedWindowLimiter.test.js`; `npm test`
+- Reason: Add window expiry/reset, count/limit decision, remaining/resetAt output, then verify with a real test run using injectable fake time.
+- Result: Success after one fix — first `npm test` run failed with `MODULE_NOT_FOUND` because `node --test tests/unit` needs a glob, not a bare directory; fixed script to `node --test tests/unit/**/*.test.js`. All tests pass.
+- Files changed: `src/algorithms/fixedWindowLimiter.js` (full check() logic), `tests/unit/fixedWindowLimiter.test.js` (new), `package.json` (new, `type: module`, `test` script), `sessions.md`, `progress.md`
+- Dependencies changed: none (uses Node's built-in `node:test`, no installs)
+- Learner stuck point: None
+- Revisit later: Session 4 - sliding window log and sliding window counter.
+
+## 2026-07-05 - Session 4 Sliding Window Log and Counter
+- Command: `npm test`
+- Reason: Implement sliding window log (exact, array-based) and sliding window counter (approximate, blended-box) limiters to fix the fixed-window boundary-burst bug.
+- Result: Success after fixing a wrong test expectation - initial `slidingWindowLogLimiter.test.js` asserted `remaining === 2` at t=1050, but correct value is `0` (only the t=0 timestamp had aged out of the 1000ms window; 200 and 400 were still recent). Fixed and all tests passed.
+- Files changed: `src/algorithms/slidingWindowLogLimiter.js`, `src/algorithms/slidingWindowLimiter.js` (counter), `tests/unit/slidingWindowLogLimiter.test.js`, `tests/unit/slidingWindowLimiter.test.js`, `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: Confused between log vs counter variants; also asked for plain-English test/output explanations and why `tests/unit/`.
+- Revisit later: Session 5 - token bucket and leaky bucket.
+
+## 2026-07-05 - Session 5 Token Bucket and Leaky Bucket
+- Command: `npm test`
+- Reason: Implement token bucket (refill-over-time, spend-on-request, allows bursts) and leaky bucket (drain-at-constant-rate, fill-on-request, no bursts), with one-line comments added per learner request.
+- Result: Success; all 5 algorithm tests pass (fixed window, sliding window log, sliding window counter, token bucket, leaky bucket).
+- Files changed: `src/algorithms/tokenBucketLimiter.js`, `src/algorithms/leakyBucketLimiter.js`, `tests/unit/tokenBucketLimiter.test.js`, `tests/unit/leakyBucketLimiter.test.js`, one-line comments added to all 5 algorithm files, `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: Needed token bucket re-explained via water-bottle analogy broken into small pieces; needed `assert` explained; needed the `node --test` summary output (tests/suites/pass/fail/cancelled/skipped/todo/duration_ms) explained field by field, plus a full flowchart trace of the leaky bucket test.
+- Revisit later: Session 6 - data structures behind each algorithm; Session 7 - concurrency/race conditions/atomicity.
+
+## 2026-07-05 - Session 6 and 7 Data Structures and Concurrency
+- Command: none (conceptual/comparison sessions, no code changes)
+- Reason: Compare the data structures used across all 5 algorithms (Map of tiny object vs Map of array) and explain race conditions/atomicity, tying both to why Session 9 will need Redis Lua scripts.
+- Result: Success; delivered using the now-locked-in format (analogy -> piece-by-piece -> flowchart -> keyword table), per explicit learner request to store this teaching-style preference.
+- Files changed: `sessions.md`, `progress.md` only
+- Dependencies changed: none
+- Learner stuck point: None new
+- Revisit later: Session 8 - Redis basics for rate limiting.
+
+## 2026-07-05 - Session 9 Redis Lua Atomic Scripts
+- Command: `redis-cli ping`; `npm run test:integration`
+- Reason: Combine INCR+EXPIRE into one atomic Lua script (client.eval) to close the two-round-trip gap from Session 8, where a crash between calls could leave a key with no TTL.
+- Result: Success; new integration test passes, including a `client.ttl()` check proving the EXPIRE was actually set atomically alongside the INCR.
+- Files changed: `src/algorithms/redisLuaFixedWindowLimiter.js` (new), `tests/integration/redisLuaFixedWindowLimiter.test.js` (new), `sessions.md`, `progress.md`
+- Dependencies changed: none
+- Learner stuck point: None
+- Revisit later: Session 10 - distributed architecture (API gateway, app replicas, centralized state); this is also where the NSFW demo route and real HTTP server/middleware get built per the Policy Copilot / AI-Aware Gateway upgrade notes.
+
+## 2026-07-28 - Sessions 10+11 Gateway Layer (AI-Aware Middleware + Multi-Tenant Policies)
+- Command: `npm test`; `node src/server.js` + curl smoke test
+- Reason: Build the designed-but-unbuilt gateway layer: universal drop-in middleware, policy engine (tiers + AI cost classes + tenant:tier:route keys), audit log, and the protected `/v1/demo/nsfw-check` demo route with a deterministic stub classifier. This closes the "designed, not yet wired" gap called out in RESUME.md.
+- Result: Success; 14/14 unit tests pass; live demo verified (free tier: 2 heavy scans then 429 with Retry-After and a self-explaining message; pro tenant isolated; audit endpoint returns decision facts).
+- Files changed: src/gateway/* (3 new), src/demo/* (2 new), src/server.js (new), src/index.js (new), tests/unit/policyEngine.test.js (new), tests/unit/limitPlane.test.js (new), README.md (new), package.json, sessions.md
+- Dependencies changed: none (zero new deps; demo server is plain node:http)
+- Learner stuck point: None
+- Revisit later: Session 12 dynamic config reload; Session 23 Policy Copilot Helper 2 can now plug into the audit events.
