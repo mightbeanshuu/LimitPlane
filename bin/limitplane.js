@@ -6,8 +6,16 @@
 //
 //   internet ──▶ limitplane (port 3000) ──▶ your real site (port 8080)
 //
-// Steps to attach (the whole thing):
-//   1. Write limitplane.config.json  (copy limitplane.config.example.json)
+// The one-liner (no clone, no config file — defaults kick in):
+//   npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080
+//
+// Quick tuning with flags:
+//   --rpm 120              every visitor gets 120 requests/minute (default 60)
+//   --heavy /api/scan,/ai  price these routes as heavy AI calls (5 tokens each)
+//   --port 3000            where the proxy listens
+//
+// Full control (tiers, tenants, API keys) with a config file:
+//   1. cp limitplane.config.example.json limitplane.config.json
 //   2. node bin/limitplane.js --config limitplane.config.json
 //   3. Send traffic to the proxy port instead of your site's port.
 //
@@ -21,22 +29,65 @@ import https from "node:https";
 import { readFileSync } from "node:fs";
 import { createLimitPlane } from "../src/index.js";
 
-// ---- 1. Read the config file -----------------------------------------------
-// Tiny flag parser: --config <path> --port <n> --upstream <url>
+// ---- 1. Flags and (optional) config file ------------------------------------
+// Tiny flag parser: --config <path> --port <n> --upstream <url> --rpm <n> --heavy <paths>
 const args = process.argv.slice(2);
 function flag(name) {
   const i = args.indexOf(`--${name}`);
   return i === -1 ? undefined : args[i + 1];
 }
 
-const configPath = flag("config") ?? "limitplane.config.json";
+if (args.includes("--help") || args.includes("-h")) {
+  console.log(`LimitPlane — AI-aware rate-limiting proxy for any site
+
+Usage:
+  npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080
+
+Flags:
+  --upstream <url>   the site to protect (required unless in config)
+  --port <n>         proxy port (default 3000)
+  --rpm <n>          requests/minute per visitor, default policy only (default 60)
+  --heavy <paths>    comma-separated routes priced as heavy AI calls (5 tokens)
+  --config <path>    full policy file (tiers, tenants, API keys) — overrides defaults
+
+Docs: https://limitplane.vercel.app`);
+  process.exit(0);
+}
+
+// The config file is OPTIONAL. No file = a sensible default policy:
+// every visitor (keyed by IP) gets an --rpm budget, all routes cheap
+// unless listed in --heavy. Enough to protect any site in one command.
+const explicitConfigPath = flag("config"); // user asked for this exact file
+const configPath = explicitConfigPath ?? "limitplane.config.json";
 let config;
 try {
   config = JSON.parse(readFileSync(configPath, "utf8"));
+  console.log(`Using policy from ${configPath}`);
 } catch (err) {
-  console.error(`Could not read config at "${configPath}": ${err.message}`);
-  console.error(`Start from the example: cp limitplane.config.example.json limitplane.config.json`);
-  process.exit(1);
+  if (explicitConfigPath) {
+    // They named a file and it's unreadable — that's an error, not a fallback.
+    console.error(`Could not read config at "${configPath}": ${err.message}`);
+    console.error(`Start from the example: cp limitplane.config.example.json limitplane.config.json`);
+    process.exit(1);
+  }
+
+  // Default policy: rpm/60 tokens refill per second, full burst allowed.
+  const rpm = Number(flag("rpm") ?? 60);
+  const heavyRoutes = (flag("heavy") ?? "").split(",").filter(Boolean);
+  config = {
+    policy: {
+      tiers: { free: { capacity: rpm, refillPerSecond: rpm / 60 } },
+      routes: {
+        ...Object.fromEntries(heavyRoutes.map((r) => [r, { costClass: "heavy" }])),
+        "*": { costClass: "light" },
+      },
+      tenants: {}, // no API keys in default mode — everyone is anon-by-IP
+    },
+  };
+  console.log(
+    `No config file — using defaults: ${rpm} req/min per visitor` +
+      (heavyRoutes.length ? `, heavy routes: ${heavyRoutes.join(", ")}` : "")
+  );
 }
 
 // CLI flags win over the file, so quick experiments don't need edits.
