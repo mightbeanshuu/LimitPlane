@@ -140,9 +140,22 @@ export function createAutomations({
     }
   }
 
+  // Manual overrides — the human is BACK in the loop when they want to be.
+  // Same ban map the storm rule uses, so the gateway needs no new wiring.
+  function ban(tenantId, ms = cooldownMs, by = "operator") {
+    bans.set(tenantId, now() + ms);
+    return act({ type: "manual_ban", tenantId, message: `${by} banned ${tenantId} for ${Math.round(ms / 1000)}s.` });
+  }
+  function unban(tenantId, by = "operator") {
+    const was = bans.delete(tenantId);
+    return act({ type: "manual_unban", tenantId, message: was ? `${by} lifted the cooldown on ${tenantId}.` : `${by} tried to unban ${tenantId}, but it wasn't banned.` });
+  }
+
   return {
     onDecision,
     banRemainingMs,
+    ban,
+    unban,
     recent: (n = 50) => actions.slice(-n).reverse(), // newest first, like the audit log
   };
 }

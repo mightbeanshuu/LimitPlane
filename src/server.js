@@ -20,6 +20,8 @@ import { createStats } from "./gateway/stats.js";
 import { createExplainer } from "./ai/aiExplainer.js";
 import { classifyText } from "./demo/nsfwStub.js";
 import { createBilling, TenantStore, PLANS } from "./billing/stripeBilling.js";
+import { createAuth } from "./auth/jwt.js";
+import { randomBytes } from "node:crypto";
 
 // The dashboard is one self-contained HTML file, read once at boot.
 const dashboardHtml = readFileSync(new URL("./dashboard/dashboard.html", import.meta.url), "utf8");
@@ -55,10 +57,45 @@ const automations = createAutomations({
   alertWebhookUrl: process.env.ALERT_WEBHOOK_URL, // e.g. a Slack webhook
   explainer,
   getRecentEvents: () => lp.audit.recent(10), // audit context for the AI
+  onAction: (a) => sseBroadcast("action", a), // autopilot panel updates live
 });
 const stats = createStats(); // live counters for the dashboard
 
-const lp = createLimitPlane({ policy, automations, onDecision: stats.onDecision });
+// ---- Real-time: Server-Sent Events ------------------------------------------
+// Every decision and autopilot action is PUSHED to connected dashboards the
+// millisecond it happens — no polling delay. SSE over plain node:http: one
+// long-lived response per client, "event: <type>\ndata: <json>\n\n" frames,
+// and the browser's EventSource reconnects by itself if the wire drops.
+const sseClients = new Set();
+function sseBroadcast(type, data) {
+  if (sseClients.size === 0) return; // nobody watching, zero cost
+  const frame = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) client.write(frame);
+}
+setInterval(() => {
+  sseBroadcast("stats", stats.snapshot({ banCheck: automations.banRemainingMs }));
+}, 2000);
+
+const lp = createLimitPlane({
+  policy,
+  automations,
+  onDecision: (e) => {
+    stats.onDecision(e);
+    sseBroadcast("decision", e); // live feed row, instantly
+  },
+});
+
+// ---- Role-based access (JWT) --------------------------------------------------
+// admin: everything. viewer: read-only dashboard data. Secret from env in
+// prod; a random one per boot otherwise (restarting logs everyone out —
+// correct default for a demo, never a hardcoded secret in the repo).
+const auth = createAuth({
+  secret: process.env.JWT_SECRET ?? randomBytes(32).toString("hex"),
+  users: {
+    "demo@limitplane.dev": { password: process.env.DASH_ADMIN_PASSWORD ?? "demo123", role: "admin" },
+    "viewer@limitplane.dev": { password: process.env.DASH_VIEWER_PASSWORD ?? "viewer123", role: "viewer" },
+  },
+});
 
 // ---- Billing: live if env keys are set, honest demo mode if not -------------
 const tenantStore = new TenantStore({ tenants, file: process.env.TENANTS_FILE });
@@ -95,6 +132,17 @@ function sendJson(res, statusCode, body) {
   res.end(JSON.stringify(body, null, 2));
 }
 
+// The role gate for protected routes: returns the JWT claims when allowed,
+// or sends the 401 itself and returns null so the caller can just `return`.
+function requireRole(req, res, roles) {
+  const claims = auth.guard(req, roles);
+  if (!claims) {
+    sendJson(res, 401, { error: "unauthorized", message: `Needs a valid Bearer token with role: ${roles.join(" or ")}. POST /v1/auth/login first.` });
+    return null;
+  }
+  return claims;
+}
+
 const server = http.createServer(async (req, res) => {
   const route = (req.url ?? "/").split("?")[0];
 
@@ -107,8 +155,73 @@ const server = http.createServer(async (req, res) => {
     res.setHeader("Content-Type", "image/svg+xml");
     return res.end(logoSvg);
   }
+  if (route === "/v1/auth/login" && req.method === "POST") {
+    const body = parseJson(await readRawBody(req));
+    const session = auth.login(body.email, body.password);
+    if (!session) return sendJson(res, 401, { error: "bad_credentials" });
+    return sendJson(res, 200, session); // { token, role, expiresInSec }
+  }
+
   if (route === "/v1/admin/stats") {
+    if (!requireRole(req, res, ["admin", "viewer"])) return;
     return sendJson(res, 200, stats.snapshot({ banCheck: automations.banRemainingMs }));
+  }
+
+  // The real-time wire. EventSource can't set headers, so the JWT rides the
+  // query string; we wrap it in a pretend request for the same guard.
+  if (route === "/v1/admin/live") {
+    const token = new URL(req.url, "http://x").searchParams.get("token");
+    if (!auth.guard({ headers: { authorization: `Bearer ${token}` } }, ["admin", "viewer"])) {
+      return sendJson(res, 401, { error: "unauthorized" });
+    }
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write(`event: stats\ndata: ${JSON.stringify(stats.snapshot({ banCheck: automations.banRemainingMs }))}\n\n`);
+    sseClients.add(res);
+    req.on("close", () => sseClients.delete(res)); // tab closed = client gone
+    return;
+  }
+
+  // ---- Real-time management (admin only): act on the system while it runs.
+  if (route === "/v1/admin/ban" && req.method === "POST") {
+    const claims = requireRole(req, res, ["admin"]);
+    if (!claims) return;
+    const body = parseJson(await readRawBody(req));
+    if (!body.tenantId) return sendJson(res, 400, { error: "tenantId required" });
+    return sendJson(res, 200, automations.ban(body.tenantId, (body.seconds ?? 300) * 1000, claims.sub));
+  }
+  if (route === "/v1/admin/unban" && req.method === "POST") {
+    const claims = requireRole(req, res, ["admin"]);
+    if (!claims) return;
+    const body = parseJson(await readRawBody(req));
+    if (!body.tenantId) return sendJson(res, 400, { error: "tenantId required" });
+    return sendJson(res, 200, automations.unban(body.tenantId, claims.sub));
+  }
+  if (route === "/v1/admin/tenants" && req.method === "POST") {
+    // Change a customer's tier live (the manual version of the Stripe flow).
+    const claims = requireRole(req, res, ["admin"]);
+    if (!claims) return;
+    const body = parseJson(await readRawBody(req));
+    const apiKey = Object.keys(tenants).find((k) => tenants[k].tenantId === body.tenantId);
+    if (!apiKey) return sendJson(res, 404, { error: "unknown_tenant", message: "Anonymous visitors have no account to re-tier." });
+    if (!policy.tiers[body.tier]) return sendJson(res, 400, { error: "unknown_tier" });
+    return sendJson(res, 200, { updated: tenantStore.setTier(apiKey, body.tier), by: claims.sub });
+  }
+  if (route === "/v1/admin/tiers" && req.method === "POST") {
+    // Edit plan limits while the gateway runs — the policy object is shared
+    // with the engine, so the next request already uses the new numbers.
+    const claims = requireRole(req, res, ["admin"]);
+    if (!claims) return;
+    const body = parseJson(await readRawBody(req));
+    const tier = policy.tiers[body.tier];
+    if (!tier) return sendJson(res, 400, { error: "unknown_tier" });
+    for (const k of ["capacity", "refillPerSecond", "monthlyQuota"]) {
+      if (body[k] !== undefined) {
+        const v = Number(body[k]);
+        if (!(v > 0)) return sendJson(res, 400, { error: "bad_value", field: k });
+        tier[k] = v;
+      }
+    }
+    return sendJson(res, 200, { tier: body.tier, now: tier, by: claims.sub });
   }
 
   // ---- Billing routes: NOT rate limited. Never lock a customer out of the
@@ -143,6 +256,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (route === "/v1/billing/simulate" && req.method === "POST") {
+    // Flipping tiers is a MUTATION: admin role only. Viewers watch.
+    if (!requireRole(req, res, ["admin"])) return;
     // Local demo of the webhook automation. Disabled the moment real Stripe
     // is configured — in prod, ONLY a signed webhook may flip tiers.
     if (billing.liveMode) {
@@ -156,18 +271,21 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, outcome.handled ? 200 : 400, outcome);
   }
 
-  // Admin peek at the diary — also outside the limiter, for debugging.
+  // Admin peek at the diary — read access for both roles.
   if (route === "/v1/admin/audit") {
+    if (!requireRole(req, res, ["admin", "viewer"])) return;
     return sendJson(res, 200, lp.audit.recent(20));
   }
 
   // What has the autopilot DONE? (alerts, nudges, cooldowns + AI notes)
   if (route === "/v1/admin/automations") {
+    if (!requireRole(req, res, ["admin", "viewer"])) return;
     return sendJson(res, 200, { aiExplainer: explainer.liveMode ? "live" : "fallback", actions: automations.recent(20) });
   }
 
   // On-demand explanation of the latest blocked request, from real facts.
   if (route === "/v1/admin/explain") {
+    if (!requireRole(req, res, ["admin", "viewer"])) return;
     const recent = lp.audit.recent(20);
     const lastBlocked = recent.find((e) => !e.allowed);
     if (!lastBlocked) return sendJson(res, 200, { explanation: "Nothing has been blocked recently." });

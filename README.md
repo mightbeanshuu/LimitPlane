@@ -182,6 +182,40 @@ auto-banned, and the free→pro upgrade flowing through the billing simulate
 endpoint. The proxy serves the same file at `/_limitplane/dashboard`, with
 data guarded by your `adminKey`.
 
+## Auth: JWT with roles, from scratch
+
+`src/auth/jwt.js` is a zero-dependency HS256 JWT: sign + verify are one HMAC
+each (the same trick as the Stripe webhook check), with expiry and a
+timing-safe compare. `POST /v1/auth/login` exchanges credentials for a token;
+every admin endpoint then checks `Authorization: Bearer <jwt>`.
+
+Roles: **admin** can do everything (billing simulate, bans, tier edits);
+**viewer** is read-only (stats, audit, automations, explain). A viewer token
+on a mutation gets a 401 before any work happens. Demo users
+`demo@limitplane.dev`/`demo123` (admin) and `viewer@limitplane.dev`/`viewer123`
+(viewer); override with `DASH_ADMIN_PASSWORD` / `DASH_VIEWER_PASSWORD`, and
+set `JWT_SECRET` in prod (default is random per boot, so restarts log
+everyone out — the right default for a demo).
+
+## Real-time: SSE push + live management
+
+The dashboard doesn't poll anymore. `GET /v1/admin/live?token=<jwt>` is a
+Server-Sent Events stream: every decision and autopilot action is pushed the
+millisecond it happens, plus a stats snapshot every 2s; EventSource
+reconnects by itself. And management is live too (admin role):
+
+| Endpoint | Does |
+|---|---|
+| `POST /v1/admin/ban` `{tenantId, seconds}` | manual cooldown, effective on the next request |
+| `POST /v1/admin/unban` `{tenantId}` | lift a cooldown now |
+| `POST /v1/admin/tenants` `{tenantId, tier}` | re-tier a customer live (manual Stripe flow) |
+| `POST /v1/admin/tiers` `{tier, capacity?, refillPerSecond?, monthlyQuota?}` | edit plan limits while the gateway runs |
+
+Tier edits mutate the same policy object the engine reads, so the very next
+request uses the new numbers — no restart, and the dashboard shows it within
+a heartbeat. Tenant cards grow ban/unban buttons and a tier dropdown when an
+admin is signed in; viewers see the same data with no controls.
+
 ## Automations: the autopilot
 
 `src/gateway/automations.js` watches the decision stream and acts with no

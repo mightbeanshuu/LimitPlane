@@ -149,7 +149,7 @@
     <input class="field" id="lPass" type="password" placeholder="password" autocomplete="current-password">
     <button class="loginbtn" onclick="doLogin()">Log in</button>
     <div class="lerr" id="lErr"></div>
-    <div class="hint">demo access: demo@limitplane.dev · demo123</div>
+    <div class="hint">admin: demo@limitplane.dev · demo123<br>viewer (read-only): viewer@limitplane.dev · viewer123</div>
   </div>
 </div>
 
@@ -220,13 +220,19 @@ document.getElementById("themeBtn").onclick = () => {
 
 /* ============ demo auth (client-side gate, labeled) ============ */
 const $ = id => document.getElementById(id);
+const DEMO_USERS = { "demo@limitplane.dev": { pass: "demo123", role: "admin" },
+                     "viewer@limitplane.dev": { pass: "viewer123", role: "viewer" } };
+let role = localStorage.getItem("lp_demo_role") ?? "admin";
 function doLogin(){
   const e = $("lEmail").value.trim(), p = $("lPass").value;
-  if (e === "demo@limitplane.dev" && p === "demo123"){
+  const u = DEMO_USERS[e];
+  if (u && u.pass === p){
+    role = u.role;
     localStorage.setItem("lp_user", e);
+    localStorage.setItem("lp_demo_role", role);
     enter(e);
   } else {
-    $("lErr").textContent = "wrong credentials · use the demo access below";
+    $("lErr").textContent = "wrong credentials · use the demo logins below";
   }
 }
 function doLogout(){
@@ -235,7 +241,7 @@ function doLogout(){
   $("login").classList.remove("gone");
 }
 function enter(user){
-  $("whoami").textContent = user.split("@")[0];
+  $("whoami").textContent = `${user.split("@")[0]} · ${role}`;
   $("login").classList.add("gone");
   $("app").style.display = "block";
 }
@@ -386,7 +392,7 @@ function paint(){
       <div class="meter neo-in"><i class="${pct > .8 ? "hot" : ""}" style="transform:scaleX(${pct.toFixed(3)})"></i></div>
       <div class="sub"><span>${fmt(s.used)} / ${fmt(tier.quota)} units</span><span>${fmt(s.ok)} ok · ${fmt(s.blocked)} blk</span></div>
       <div class="sub" style="margin-top:3px"><span style="color:var(--faint)">${s.note}</span></div>
-      ${s.tier !== "enterprise" ? `<button class="upbtn" onclick="upgrade(${i})">Upgrade via Stripe → ${s.tier === "free" ? "pro" : "enterprise"}</button>` : ""}
+      ${role === "admin" && s.tier !== "enterprise" ? `<button class="upbtn" onclick="upgrade(${i})">Upgrade via Stripe → ${s.tier === "free" ? "pro" : "enterprise"}</button>` : ""}
     </div>`;
   }).join("") + bannedAnons.map(b => `<div class="tenant neo">
       <div class="top"><span class="id">${b.id}</span><span class="chip ban">cooldown ${Math.max(0, Math.ceil((b.banExpiry - Date.now()) / 1000))}s</span></div>

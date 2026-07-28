@@ -28,37 +28,37 @@
   body{
     background:var(--bg);color:var(--ink);min-height:100vh;
     font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-    -webkit-font-smoothing:antialiased;position:relative;overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;position:relative;overflow-x:hidden;transition:background .3s,color .3s;
   }
-  /* soft pastel washes behind the glass */
   body::before{content:"";position:fixed;inset:0;z-index:-1;background:
     radial-gradient(560px 420px at 12% -6%,var(--wash1),transparent 65%),
     radial-gradient(520px 420px at 88% 8%,var(--wash2),transparent 65%),
     radial-gradient(640px 480px at 55% 110%,var(--wash3),transparent 65%)}
-  body{transition:background .3s,color .3s}
-  .iconbtn{width:38px;height:38px;border:none;border-radius:12px;cursor:pointer;background:var(--bg);color:var(--ink);font-size:15px;
-    box-shadow:5px 5px 11px var(--shadow-dark),-5px -5px 11px var(--shadow-light)}
-  .iconbtn:active{box-shadow:inset 4px 4px 8px var(--shadow-dark),inset -4px -4px 8px var(--shadow-light)}
 
   .wrap{max-width:1180px;margin:0 auto;padding:26px 24px 60px}
-
-  /* ---------- glass + neumorphic building blocks ---------- */
   .glass{background:var(--glass);backdrop-filter:blur(18px) saturate(1.5);-webkit-backdrop-filter:blur(18px) saturate(1.5);
     border:1px solid var(--glass-edge);border-radius:20px;box-shadow:0 10px 34px rgba(30,45,90,.09)}
-  .neo{background:var(--bg);border-radius:18px;
-    box-shadow:7px 7px 15px var(--shadow-dark),-7px -7px 15px var(--shadow-light)}
-  .neo-in{background:var(--bg);border-radius:14px;
-    box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+  .neo{background:var(--bg);border-radius:18px;box-shadow:7px 7px 15px var(--shadow-dark),-7px -7px 15px var(--shadow-light)}
+  .neo-in{background:var(--bg);border-radius:14px;box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
 
   header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:22px}
   .brand{display:flex;align-items:center;gap:12px;font-family:var(--display);font-weight:700;font-size:19px;letter-spacing:.05em}
   .brand img{width:38px;height:38px;border-radius:10px;box-shadow:4px 4px 10px var(--shadow-dark)}
   .brand .p{color:var(--sky)}
+  .hright{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .live{display:flex;align-items:center;gap:8px;font:12px var(--mono);color:var(--dim);padding:9px 16px}
   .dot{width:9px;height:9px;border-radius:50%;background:var(--teal)}
   .dot.pulse{animation:pulse 1.6s ease infinite}
   @keyframes pulse{50%{opacity:.35}}
   .dot.err{background:var(--rose)}
+  .iconbtn{width:38px;height:38px;border:none;border-radius:12px;cursor:pointer;background:var(--bg);color:var(--ink);font-size:15px;
+    box-shadow:5px 5px 11px var(--shadow-dark),-5px -5px 11px var(--shadow-light)}
+  .iconbtn:active{box-shadow:inset 4px 4px 8px var(--shadow-dark),inset -4px -4px 8px var(--shadow-light)}
+  .userchip{display:flex;align-items:center;gap:9px;padding:7px 8px 7px 14px;font:12px var(--mono);color:var(--dim)}
+  .userchip b{color:var(--ink);font-weight:600}
+  .userchip .role{font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:99px;background:rgba(2,132,199,.14);color:var(--sky)}
+  .userchip .role.viewer{background:rgba(93,107,132,.14);color:var(--dim)}
+  .userchip button{border:none;cursor:pointer;font:600 11px var(--mono);color:var(--rose);background:transparent;padding:6px 8px}
 
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:18px;margin-bottom:22px}
   .kpi{padding:18px 20px}
@@ -70,21 +70,20 @@
   .grid{display:grid;grid-template-columns:1.5fr 1fr;gap:18px}
   @media(max-width:900px){.grid{grid-template-columns:1fr}}
   .panel{padding:20px 22px;margin-bottom:18px}
-  .panel h2{font-family:var(--display);font-size:16px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px}
+  .panel h2{font-family:var(--display);font-size:16px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;gap:10px;flex-wrap:wrap}
   .panel h2 span{font:11px var(--mono);color:var(--faint);letter-spacing:.08em;font-weight:400}
 
-  /* traffic chart: fixed-height columns, fills scale with transform */
   .chart{display:flex;align-items:flex-end;gap:2px;height:110px;padding:10px 12px}
   .col{flex:1;display:flex;flex-direction:column-reverse;gap:1px;height:100%}
   .col i{display:block;width:100%;border-radius:2px;transform-origin:bottom;height:100%}
   .col .ok{background:rgba(13,148,136,.7)}
   .col .no{background:rgba(225,29,72,.75)}
 
-  .tenants{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  .tenants{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
   .tenant{padding:16px 18px;border-radius:16px}
-  .tenant .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .tenant .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px}
   .tenant .id{font:600 13px var(--mono);word-break:break-all}
-  .chip{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:4px 9px;border-radius:99px}
+  .chip{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:4px 9px;border-radius:99px;white-space:nowrap}
   .chip.free{background:rgba(93,107,132,.14);color:var(--dim)}
   .chip.pro{background:rgba(2,132,199,.14);color:var(--sky)}
   .chip.enterprise{background:rgba(13,148,136,.16);color:var(--teal)}
@@ -93,18 +92,24 @@
   .meter i{display:block;height:100%;width:100%;transform-origin:left;border-radius:6px;background:linear-gradient(90deg,var(--teal),var(--sky));transition:transform .4s ease}
   .meter i.hot{background:linear-gradient(90deg,var(--amber),var(--rose))}
   .tenant .sub{font:11px var(--mono);color:var(--dim);display:flex;justify-content:space-between}
+  .mgmt{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .mgmt button,.mgmt select{border:none;cursor:pointer;font:600 11px var(--mono);padding:8px 11px;border-radius:10px;background:var(--bg);color:var(--ink);
+    box-shadow:4px 4px 9px var(--shadow-dark),-4px -4px 9px var(--shadow-light)}
+  .mgmt button:active{box-shadow:inset 3px 3px 7px var(--shadow-dark),inset -3px -3px 7px var(--shadow-light)}
+  .mgmt .banb{color:var(--rose)} .mgmt .unbanb{color:var(--teal)}
 
   .feed{max-height:330px;overflow-y:auto;display:flex;flex-direction:column;gap:7px}
   .row{padding:9px 13px;border-radius:12px;font:12px var(--mono);display:flex;gap:10px;align-items:center;background:var(--inner)}
   .row.no{background:rgba(225,29,72,.06)}
   .row .st{font-weight:700;min-width:34px}
   .row.ok .st{color:var(--teal)} .row.no .st{color:var(--rose)}
-  .row .rt{flex:1;color:var(--ink)} .row .who{color:var(--dim)} .row .why{color:var(--faint)}
+  .row .rt{flex:1;color:var(--ink);word-break:break-all} .row .who{color:var(--dim)} .row .why{color:var(--faint)}
 
   .acts{display:flex;flex-direction:column;gap:10px;max-height:330px;overflow-y:auto}
   .act{padding:13px 15px;border-radius:14px;background:var(--inner)}
   .act .t{font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
-  .act .t.auto_cooldown{color:var(--rose)} .act .t.quota_alert{color:var(--amber)} .act .t.upgrade_nudge{color:var(--sky)}
+  .act .t.auto_cooldown,.act .t.manual_ban{color:var(--rose)} .act .t.quota_alert{color:var(--amber)}
+  .act .t.upgrade_nudge{color:var(--sky)} .act .t.manual_unban{color:var(--teal)}
   .act .m{font-size:12.5px;color:var(--dim)}
   .act .ai{margin-top:7px;font-size:12px;color:var(--ink);background:rgba(56,189,248,.09);border-radius:9px;padding:8px 10px}
   .act .ai::before{content:"AI · ";font:10px var(--mono);color:var(--sky);letter-spacing:.1em}
@@ -113,20 +118,52 @@
   .btn{font:600 13px/1 inherit;color:var(--ink);padding:13px 18px;border:none;cursor:pointer;border-radius:14px;background:var(--bg);
     box-shadow:5px 5px 11px var(--shadow-dark),-5px -5px 11px var(--shadow-light);transition:box-shadow .12s}
   .btn:active{box-shadow:inset 4px 4px 8px var(--shadow-dark),inset -4px -4px 8px var(--shadow-light)}
-  .btn small{display:block;font-weight:400;color:var(--faint);font-size:11px;margin-top:3px}
+  .btn small{display:block;font-weight:400;color:var(--faint);margin-top:3px;font-size:11px}
   .btn.storm{color:var(--rose)} .btn.up{color:var(--sky)}
   .toggle{display:flex;align-items:center;gap:9px;font:12px var(--mono);color:var(--dim);cursor:pointer;padding:10px 14px}
   .empty{color:var(--faint);font:12px var(--mono);padding:14px}
   .keybox{display:none;margin-bottom:18px;padding:14px 18px;gap:10px;align-items:center}
   .keybox input{flex:1;border:none;background:transparent;font:13px var(--mono);color:var(--ink);outline:none;padding:10px 12px}
+
+  /* ---------- login gate ---------- */
+  #login{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .35s}
+  #login.gone{opacity:0;pointer-events:none}
+  .logincard{width:min(400px,92vw);padding:34px 32px;text-align:center}
+  .logincard img{width:56px;height:56px;border-radius:14px;margin-bottom:14px}
+  .logincard h1{font-family:var(--display);font-size:22px;font-weight:700;margin-bottom:4px}
+  .logincard p{color:var(--dim);font-size:13px;margin-bottom:22px}
+  .field{display:block;width:100%;margin-bottom:12px;padding:13px 15px;border:none;border-radius:13px;background:var(--bg);color:var(--ink);font:13.5px var(--mono);outline:none;
+    box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+  .loginbtn{width:100%;border:none;cursor:pointer;padding:14px;border-radius:13px;font:600 14px inherit;color:#fff;background:linear-gradient(90deg,var(--sky),var(--teal));margin-top:4px}
+  .hint{margin-top:14px;font:11px var(--mono);color:var(--faint)}
+  .lerr{color:var(--rose);font:11.5px var(--mono);min-height:16px;margin-top:8px}
 </style>
 </head>
 <body>
+
+<!-- ============ LOGIN (JWT; hidden in proxy mode) ============ -->
+<div id="login" class="gone">
+  <div class="logincard glass">
+    <img src="/logo.svg" onerror="this.style.display='none'" alt="">
+    <h1>LIMIT<span style="color:var(--sky)">PLANE</span></h1>
+    <p>Sign in · roles are enforced by JWT server-side</p>
+    <input class="field" id="lEmail" type="email" placeholder="email" autocomplete="username">
+    <input class="field" id="lPass" type="password" placeholder="password" autocomplete="current-password">
+    <button class="loginbtn" onclick="doLogin()">Log in</button>
+    <div class="lerr" id="lErr"></div>
+    <div class="hint">admin: demo@limitplane.dev · demo123<br>viewer (read-only): viewer@limitplane.dev · viewer123</div>
+  </div>
+</div>
+
 <div class="wrap">
 
   <header>
-    <div class="brand"><img src="/logo.svg" onerror="this.style.display='none'" alt="">LIMIT<span class="p">PLANE</span>&nbsp;<span style="font-weight:400;color:var(--dim);font-size:14px">/ live dashboard</span></div>
-    <div style="display:flex;gap:10px;align-items:center"><div class="live glass"><span class="dot pulse" id="liveDot"></span><span id="liveTxt">connecting…</span></div><button class="iconbtn" id="themeBtn" title="toggle theme">◐</button></div>
+    <div class="brand"><img src="/logo.svg" onerror="this.style.display='none'" alt="LimitPlane logo">LIMIT<span class="p">PLANE</span>&nbsp;<span style="font-weight:400;color:var(--dim);font-size:14px">/ live dashboard</span></div>
+    <div class="hright">
+      <div class="live glass"><span class="dot pulse" id="liveDot"></span><span id="liveTxt">connecting…</span></div>
+      <button class="iconbtn" id="themeBtn" title="toggle theme">◐</button>
+      <div class="userchip glass" id="userchip" style="display:none"><b id="whoami"></b><span class="role" id="rolechip"></span><button onclick="doLogout()">logout</button></div>
+    </div>
   </header>
 
   <div class="keybox glass" id="keybox">
@@ -149,17 +186,17 @@
   </div>
 
   <div class="panel glass">
-    <h2>Connected sites <span>one card per tenant, plan meter fills as the month is spent</span></h2>
+    <h2>Connected sites <span id="mgmtHint">admin can re-tier, ban, unban — live</span></h2>
     <div class="tenants" id="tenants"><div class="empty">No traffic yet. Send some below.</div></div>
   </div>
 
   <div class="grid">
     <div class="panel glass">
-      <h2>Decision feed <span>newest first</span></h2>
+      <h2>Decision feed <span>pushed over SSE, newest first</span></h2>
       <div class="feed" id="feed"><div class="empty">Waiting for requests…</div></div>
     </div>
     <div class="panel glass">
-      <h2>Autopilot <span>automations + AI notes</span></h2>
+      <h2>Autopilot <span>automations + AI notes, live</span></h2>
       <div class="acts" id="acts"><div class="empty">Nothing has needed doing yet.</div></div>
     </div>
   </div>
@@ -171,7 +208,7 @@
       <button class="btn" onclick="scan('demo-free-key')">Heavy AI scan<small>free tenant · 5 units</small></button>
       <button class="btn" onclick="scan('demo-pro-key')">Heavy AI scan<small>pro tenant · 5 units</small></button>
       <button class="btn storm" onclick="storm()">Simulate retry-storm<small>12 rapid calls, no key → autopilot bans</small></button>
-      <button class="btn up" onclick="upgrade()">Upgrade free → pro<small>billing simulate = webhook flow</small></button>
+      <button class="btn up" id="upgradeBtn" onclick="upgrade()">Upgrade free → pro<small>billing simulate = webhook flow (admin)</small></button>
       <label class="toggle neo"><input type="checkbox" id="autoT"> auto traffic</label>
     </div>
   </div>
@@ -179,9 +216,7 @@
 </div>
 
 <script>
-  // Two homes, one file: served by the demo gateway at /dashboard (open data
-  // endpoints, traffic buttons shown) or by the proxy at /_limitplane/dashboard
-  // (data guarded by the admin key, traffic buttons hidden).
+  // ---------- theme ----------
   const rootEl = document.documentElement;
   rootEl.dataset.theme = localStorage.getItem("lp_theme") ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   document.getElementById("themeBtn").onclick = () => {
@@ -189,21 +224,64 @@
     localStorage.setItem("lp_theme", rootEl.dataset.theme);
   };
 
+  // ---------- two homes, one file ----------
+  // Demo gateway (/dashboard): JWT login, SSE real-time, live management.
+  // Proxy (/_limitplane/dashboard): adminKey header + polling (no JWT there).
   const PROXY = location.pathname.startsWith("/_limitplane");
   const BASE = PROXY ? "/_limitplane" : "/v1/admin";
-  let adminKey = localStorage.getItem("lp_admin_key") ?? "";
-  if (PROXY) {
-    document.getElementById("keybox").style.display = "flex";
-    document.getElementById("adminKey").value = adminKey;
-    document.getElementById("trafficPanel").style.display = "none";
-  }
-  function saveKey(){ adminKey = document.getElementById("adminKey").value.trim(); localStorage.setItem("lp_admin_key", adminKey); }
-  const HDRS = () => PROXY ? { "x-limitplane-admin": adminKey } : {};
   const $ = id => document.getElementById(id);
 
-  async function fetchJson(path){ const r = await fetch(BASE + path, { headers: HDRS() }); if(!r.ok) throw new Error(r.status); return r.json(); }
+  let token = localStorage.getItem("lp_token") ?? "";
+  let role = localStorage.getItem("lp_role") ?? "";
+  let adminKey = localStorage.getItem("lp_admin_key") ?? "";
+
+  if (PROXY) {
+    $("keybox").style.display = "flex";
+    $("adminKey").value = adminKey;
+    $("trafficPanel").style.display = "none";
+    $("mgmtHint").textContent = "read-only in proxy mode";
+  } else if (!token) {
+    $("login").classList.remove("gone");
+  }
+  function saveKey(){ adminKey = $("adminKey").value.trim(); localStorage.setItem("lp_admin_key", adminKey); tick(); }
+
+  // ---------- JWT auth ----------
+  async function doLogin(){
+    const r = await fetch("/v1/auth/login", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: $("lEmail").value.trim(), password: $("lPass").value }) });
+    if (!r.ok){ $("lErr").textContent = "wrong credentials · demo logins are below"; return; }
+    const session = await r.json();
+    token = session.token; role = session.role;
+    localStorage.setItem("lp_token", token); localStorage.setItem("lp_role", role);
+    localStorage.setItem("lp_user", $("lEmail").value.trim());
+    $("login").classList.add("gone");
+    enterUi(); connectLive(); tick();
+  }
+  function doLogout(){
+    ["lp_token","lp_role","lp_user"].forEach(k => localStorage.removeItem(k));
+    location.reload();
+  }
+  function enterUi(){
+    if (PROXY) return;
+    $("userchip").style.display = "flex";
+    $("whoami").textContent = (localStorage.getItem("lp_user") ?? "user").split("@")[0];
+    const rc = $("rolechip"); rc.textContent = role; rc.className = "role " + role;
+    if (role !== "admin") $("upgradeBtn").style.display = "none"; // viewers watch
+  }
+  $("lPass")?.addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+
+  const HDRS = () => PROXY ? { "x-limitplane-admin": adminKey } : { authorization: "Bearer " + token };
+  async function fetchJson(path){
+    const r = await fetch(BASE + path, { headers: HDRS() });
+    if (r.status === 401 && !PROXY){ doLogout(); }
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }
+
+  // ---------- painting ----------
   const fmt = n => n >= 1000 ? (n/1000).toFixed(1) + "k" : String(n);
   const ago = ms => ms < 60000 ? Math.floor(ms/1000)+"s" : ms < 3600000 ? Math.floor(ms/60000)+"m" : Math.floor(ms/3600000)+"h";
+  const feedRows = [], actRows = [];
 
   function paintStats(s){
     $("kChecks").textContent = fmt(s.totals.checks);
@@ -212,72 +290,87 @@
     $("kBans").textContent = s.tenants.filter(t => t.bannedMs > 0).length;
     $("kUp").innerHTML = ago(s.uptimeMs) + "<small></small>";
 
-    // chart: 60 columns, stacked fills scaled against the busiest second
     const peak = Math.max(1, ...s.series.map(b => b.allowed + b.blocked));
-    $("chart").innerHTML = s.series.map(b => {
-      const okH = b.allowed / peak, noH = b.blocked / peak;
-      return `<div class="col">
-        <i class="ok" style="transform:scaleY(${okH.toFixed(3)})"></i>
-        <i class="no" style="transform:scaleY(${noH.toFixed(3)})"></i>
-      </div>`;
-    }).join("");
+    $("chart").innerHTML = s.series.map(b => `<div class="col">
+        <i class="ok" style="transform:scaleY(${(b.allowed/peak).toFixed(3)})"></i>
+        <i class="no" style="transform:scaleY(${(b.blocked/peak).toFixed(3)})"></i>
+      </div>`).join("");
 
-    // tenant cards
     if (s.tenants.length){
+      const canManage = !PROXY && role === "admin";
       $("tenants").innerHTML = s.tenants.map(t => {
         const q = t.monthly, pct = q ? Math.min(t.monthly.used / t.monthly.quota, 1) : 0;
+        const isAnon = t.tenantId.startsWith("anon:");
         return `<div class="tenant neo">
           <div class="top"><span class="id">${t.tenantId}</span>
             ${t.bannedMs > 0 ? `<span class="chip ban">cooldown ${Math.ceil(t.bannedMs/1000)}s</span>` : `<span class="chip ${t.tier}">${t.tier}</span>`}
           </div>
           <div class="meter neo-in"><i class="${pct > .8 ? "hot" : ""}" style="transform:scaleX(${q ? pct.toFixed(3) : 0})"></i></div>
           <div class="sub"><span>${q ? `${fmt(q.used)} / ${fmt(q.quota)} units` : "no monthly plan"}</span><span>${fmt(t.allowed)} ok · ${fmt(t.blocked)} blocked</span></div>
+          ${canManage ? `<div class="mgmt">
+            ${t.bannedMs > 0
+              ? `<button class="unbanb" onclick="mgmt('unban','${t.tenantId}')">unban now</button>`
+              : `<button class="banb" onclick="mgmt('ban','${t.tenantId}')">ban 60s</button>`}
+            ${isAnon ? "" : `<select onchange="setTier('${t.tenantId}', this.value)">
+              ${["free","pro","enterprise"].map(x => `<option ${x === t.tier ? "selected" : ""}>${x}</option>`).join("")}
+            </select>`}
+          </div>` : ""}
         </div>`;
       }).join("");
     }
   }
-
-  function paintFeed(events){
-    if (!events.length) return;
-    $("feed").innerHTML = events.slice(0, 14).map(e => `
+  function paintFeed(){ if (feedRows.length) $("feed").innerHTML = feedRows.slice(0, 14).map(e => `
       <div class="row ${e.allowed ? "ok" : "no"}">
-        <span class="st">${e.allowed ? "200" : "429"}</span>
-        <span class="rt">${e.route}</span>
-        <span class="who">${e.tenantId}</span>
-        <span class="why">${e.allowed ? e.costClass : (e.reason ?? "")}</span>
-      </div>`).join("");
-  }
-
-  function paintActs(data){
-    const actions = data.actions ?? data; // server wraps, proxy returns bare list
-    if (!actions.length) return;
-    $("acts").innerHTML = actions.slice(0, 8).map(a => `
+        <span class="st">${e.allowed ? "200" : "429"}</span><span class="rt">${e.route}</span>
+        <span class="who">${e.tenantId}</span><span class="why">${e.allowed ? e.costClass : (e.reason ?? "")}</span>
+      </div>`).join(""); }
+  function paintActs(){ if (actRows.length) $("acts").innerHTML = actRows.slice(0, 8).map(a => `
       <div class="act">
         <div class="t ${a.type}">${a.type.replace(/_/g," ")}</div>
         <div class="m">${a.message}</div>
         ${a.aiNote ? `<div class="ai">${a.aiNote}</div>` : ""}
-      </div>`).join("");
-  }
+      </div>`).join(""); }
 
-  async function tick(){
+  // ---------- real-time: SSE first, polling as fallback ----------
+  let es = null, pollTimer = null;
+  function connectLive(){
+    if (PROXY || !token || es) return;
+    es = new EventSource(`/v1/admin/live?token=${encodeURIComponent(token)}`);
+    es.addEventListener("stats", e => { paintStats(JSON.parse(e.data)); setLive("live · SSE push"); });
+    es.addEventListener("decision", e => { feedRows.unshift(JSON.parse(e.data)); if (feedRows.length > 30) feedRows.pop(); paintFeed(); });
+    es.addEventListener("action", e => { actRows.unshift(JSON.parse(e.data)); if (actRows.length > 12) actRows.pop(); paintActs(); });
+    es.onerror = () => setLive("reconnecting…", true); // EventSource retries itself
+  }
+  function setLive(msg, err){ $("liveDot").className = err ? "dot err" : "dot pulse"; $("liveTxt").textContent = msg; }
+
+  async function tick(){ // fallback + initial hydrate (proxy mode polls forever)
+    if (!PROXY && !token) return;
     try{
-      const [stats, audit, acts] = await Promise.all([
-        fetchJson("/stats"), fetchJson("/audit"), fetchJson("/automations"),
-      ]);
-      paintStats(stats); paintFeed(audit); paintActs(acts);
-      $("liveDot").className = "dot pulse"; $("liveTxt").textContent = "live · polling 1.5s";
-    }catch(err){
-      $("liveDot").className = "dot err";
-      $("liveTxt").textContent = PROXY && !adminKey ? "enter admin key above" : "gateway unreachable";
-    }
+      const [stats, audit, acts] = await Promise.all([fetchJson("/stats"), fetchJson("/audit"), fetchJson("/automations")]);
+      paintStats(stats);
+      feedRows.length = 0; feedRows.push(...audit); paintFeed();
+      const list = acts.actions ?? acts; actRows.length = 0; actRows.push(...list); paintActs();
+      if (PROXY) setLive("live · polling 1.5s");
+    }catch{ setLive(PROXY && !adminKey ? "enter admin key above" : "gateway unreachable", true); }
   }
-  tick(); setInterval(tick, 1500);
+  if (PROXY){ tick(); pollTimer = setInterval(tick, 1500); }
+  else if (token){ enterUi(); tick(); connectLive(); }
 
-  // ---- traffic generators (demo-gateway mode only) ----
+  // ---------- real-time management (admin) ----------
+  async function mgmt(action, tenantId){
+    await fetch(`/v1/admin/${action}`, { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+      body: JSON.stringify({ tenantId, seconds: 60 }) });
+  }
+  async function setTier(tenantId, tier){
+    await fetch("/v1/admin/tenants", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+      body: JSON.stringify({ tenantId, tier }) });
+  }
+
+  // ---------- traffic generators ----------
   const hit = (key, path) => fetch(path, { headers: key ? { "x-api-key": key } : {} });
   const scan = key => fetch("/v1/demo/nsfw-check", { method: "POST", headers: { "content-type": "application/json", ...(key ? { "x-api-key": key } : {}) }, body: JSON.stringify({ text: "dashboard demo text" }) });
   async function storm(){ for (let i = 0; i < 12; i++) await scan(null); }
-  const upgrade = () => fetch("/v1/billing/simulate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ apiKey: "demo-free-key", plan: "pro" }) });
+  const upgrade = () => fetch("/v1/billing/simulate", { method: "POST", headers: { "content-type": "application/json", ...HDRS() }, body: JSON.stringify({ apiKey: "demo-free-key", plan: "pro" }) });
   setInterval(() => {
     if (!$("autoT").checked) return;
     const roll = Math.random();
