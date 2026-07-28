@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LimitPlane · Live Dashboard</title>
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{
     --bg:#eef2f8; --ink:#1c2940; --dim:#5d6b84; --faint:#93a0b6;
@@ -140,6 +143,22 @@
   .keybox input{flex:1;border:none;background:transparent;font:13px var(--mono);color:var(--ink);outline:none;padding:10px 12px}
 
   /* ---------- login gate ---------- */
+  #map{height:300px;border-radius:14px;overflow:hidden}
+  .leaflet-container{background:transparent;font:11px var(--mono)}
+  .ipchip{font-size:10px;color:var(--faint);background:var(--inner);padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .chatfab{position:fixed;right:22px;bottom:22px;z-index:55;width:52px;height:52px;border:none;border-radius:50%;cursor:pointer;font-size:20px;color:#fff;background:linear-gradient(135deg,var(--sky),var(--teal));box-shadow:0 10px 26px rgba(2,132,199,.35)}
+  .chatbox{position:fixed;right:22px;bottom:84px;z-index:55;width:min(360px,calc(100vw - 44px));display:none;flex-direction:column;overflow:hidden}
+  .chatbox.open{display:flex}
+  .chathead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;font-family:var(--display);font-weight:700;font-size:14px;border-bottom:1px solid var(--glass-edge)}
+  .chathead button{border:none;background:transparent;color:var(--faint);cursor:pointer;font-size:16px}
+  .chatlog{max-height:320px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .m{max-width:85%;padding:9px 12px;border-radius:13px;font-size:12.5px;line-height:1.5}
+  .m.user{align-self:flex-end;background:var(--sky);color:#fff;border-bottom-right-radius:4px}
+  .m.ai{align-self:flex-start;background:var(--inner);color:var(--ink);border-bottom-left-radius:4px}
+  .chatin{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--glass-edge)}
+  .chatin input{flex:1;border:none;background:transparent;color:var(--ink);font:13px var(--mono);outline:none;padding:8px 10px}
+  .chatin button{border:none;cursor:pointer;font:700 14px var(--mono);color:var(--sky);background:transparent}
+
   #login{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .35s}
   #login.gone{opacity:0;pointer-events:none}
   .logincard{width:min(400px,92vw);padding:34px 32px;text-align:center}
@@ -176,7 +195,7 @@
     <div class="hright">
       <div class="statusbar glass" id="statusbar"><span class="ping"><i></i></span><span id="liveTxt">connecting…</span><span class="sep"></span><span class="transport" id="transport">boot</span></div>
       <button class="iconbtn" id="themeBtn" title="toggle theme">◐</button>
-      <a class="iconbtn" href="/admin" title="organizations admin">⌘</a>
+      <a class="iconbtn" href="/admin" id="admLink" title="organizations admin">⌘</a>
       <div class="userchip glass" id="userchip" style="display:none"><span class="avatar" id="avatar"></span><b id="whoami"></b><span class="role" id="rolechip"></span><button onclick="doLogout()">logout</button></div>
     </div>
   </header>
@@ -192,12 +211,18 @@
     <div class="kpi neo good"><div class="lbl">Allowed</div><div class="val" id="kAllowed">–</div></div>
     <div class="kpi neo bad"><div class="lbl">Blocked</div><div class="val" id="kBlocked">–</div></div>
     <div class="kpi neo warn"><div class="lbl">Active cooldowns</div><div class="val" id="kBans">–</div></div>
+    <div class="kpi neo"><div class="lbl">Visitors</div><div class="val" id="kVis">–</div></div>
     <div class="kpi neo"><div class="lbl">Uptime</div><div class="val" id="kUp">–</div></div>
   </div>
 
   <div class="panel glass">
     <h2>Traffic <span>last 60s</span></h2>
     <div class="chartwrap neo-in"><canvas id="chartCanvas"></canvas></div>
+  </div>
+
+  <div class="panel glass">
+    <h2>Visitor map <span id="visMeta"></span></h2>
+    <div id="map" class="neo-in"></div>
   </div>
 
   <div class="panel glass" id="addPanel" style="display:none">
@@ -241,6 +266,13 @@
 
 </div>
 
+<button class="chatfab" id="chatFab" title="ask LimitPlane AI">✦</button>
+<div class="chatbox glass" id="chatbox">
+  <div class="chathead">LimitPlane AI <button onclick="document.getElementById('chatbox').classList.remove('open')">×</button></div>
+  <div class="chatlog" id="chatlog"><div class="m ai">Ask about live traffic, tenants, bans, plans.</div></div>
+  <div class="chatin"><input id="chatInput" placeholder="why was that IP banned?"><button onclick="sendChat()">→</button></div>
+</div>
+
 <script>
   // ---------- theme ----------
   const rootEl = document.documentElement;
@@ -249,13 +281,18 @@
     rootEl.dataset.theme = rootEl.dataset.theme === "dark" ? "light" : "dark";
     localStorage.setItem("lp_theme", rootEl.dataset.theme);
     drawChart(lastSeries); // chart colors come from the theme vars
+    setTiles();
+    window.themeThree?.();
   };
 
   // ---------- two homes, one file ----------
   // Demo gateway (/dashboard): JWT login, SSE real-time, live management.
   // Proxy (/_limitplane/dashboard): adminKey header + polling (no JWT there).
   const PROXY = location.pathname.startsWith("/_limitplane");
-  const BASE = PROXY ? "/_limitplane" : "/v1/admin";
+  // Hosted copies of this file set window.LP_GATEWAY to the public gateway;
+  // served by the gateway itself, same-origin is the gateway.
+  const GW = window.LP_GATEWAY ?? "";
+  const BASE = PROXY ? "/_limitplane" : GW + "/v1/admin";
   const $ = id => document.getElementById(id);
 
   let token = localStorage.getItem("lp_token") ?? "";
@@ -274,7 +311,7 @@
 
   // ---------- JWT auth ----------
   async function doLogin(){
-    const r = await fetch("/v1/auth/login", { method: "POST", headers: { "content-type": "application/json" },
+    const r = await fetch(GW + "/v1/auth/login", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: $("lEmail").value.trim(), password: $("lPass").value }) });
     if (!r.ok){ $("lErr").textContent = "wrong credentials · demo logins are below"; return; }
     const session = await r.json();
@@ -318,6 +355,8 @@
     $("kBlocked").textContent = fmt(s.totals.blocked);
     $("kBans").textContent = s.tenants.filter(t => t.bannedMs > 0).length;
     $("kUp").innerHTML = ago(s.uptimeMs) + "<small></small>";
+    if (s.uniqueVisitors !== undefined) $("kVis").textContent = s.uniqueVisitors;
+    if (s.visitors) updateMap(s.visitors);
 
     drawChart(s.series);
 
@@ -348,7 +387,7 @@
   function paintFeed(){ if (feedRows.length) $("feed").innerHTML = feedRows.slice(0, 14).map(e => `
       <div class="row ${e.allowed ? "ok" : "no"}">
         <span class="st">${e.allowed ? "200" : "429"}</span><span class="rt">${e.route}</span>
-        <span class="who">${e.tenantId}</span><span class="why">${e.allowed ? e.costClass : (e.reason ?? "")}</span>
+        <span class="who">${e.tenantId}</span>${e.ip ? `<span class="ipchip">${e.ip}</span>` : ""}<span class="why">${e.allowed ? e.costClass : (e.reason ?? "")}</span>
       </div>`).join(""); }
   function paintActs(){ if (actRows.length) $("acts").innerHTML = actRows.slice(0, 8).map(a => `
       <div class="act">
@@ -372,7 +411,8 @@
   function startWs(){
     let opened = false;
     try{
-      ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+      const wsBase = (GW || location.origin).replace(/^http/, "ws");
+      ws = new WebSocket(`${wsBase}/ws?token=${encodeURIComponent(token)}`);
     }catch{ return startSse(); }
     ws.onopen = () => { opened = true; setLive("live", false, "websocket"); };
     ws.onmessage = (m) => { const { type, data } = JSON.parse(m.data); onLiveMsg(type, data); };
@@ -380,7 +420,7 @@
   }
   function startSse(){
     if (es) return;
-    es = new EventSource(`/v1/admin/live?token=${encodeURIComponent(token)}`);
+    es = new EventSource(`${GW}/v1/admin/live?token=${encodeURIComponent(token)}`);
     for (const t of ["stats", "decision", "action", "action_note"]){
       es.addEventListener(t, e => { onLiveMsg(t, JSON.parse(e.data)); if (t === "stats") setLive("live", false, "sse"); });
     }
@@ -470,11 +510,11 @@
 
   // ---------- real-time management (admin) ----------
   async function mgmt(action, tenantId){
-    await fetch(`/v1/admin/${action}`, { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+    await fetch(`${GW}/v1/admin/${action}`, { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
       body: JSON.stringify({ tenantId, seconds: 60 }) });
   }
   async function setTier(tenantId, tier){
-    await fetch("/v1/admin/tenants", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+    await fetch(GW + "/v1/admin/tenants", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
       body: JSON.stringify({ tenantId, tier }) });
   }
 
@@ -483,7 +523,7 @@
   async function addSite(){
     const name = $("siteName").value.trim();
     if (!name) return;
-    const r = await fetch("/v1/admin/sites", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+    const r = await fetch(GW + "/v1/admin/sites", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
       body: JSON.stringify({ name, tier: $("siteTier").value }) });
     const data = await r.json();
     const box = $("snippet"); box.style.display = "block";
@@ -495,18 +535,73 @@
   }
   async function copySnip(){ await navigator.clipboard.writeText(snipText); }
   async function removeSite(tenantId){
-    await fetch("/v1/admin/sites/remove", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+    await fetch(GW + "/v1/admin/sites/remove", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
       body: JSON.stringify({ tenantId }) });
   }
 
   // ---------- traffic generators ----------
-  const hit = (key, path) => fetch(path, { headers: key ? { "x-api-key": key } : {} });
-  const scan = key => fetch("/v1/demo/nsfw-check", { method: "POST", headers: { "content-type": "application/json", ...(key ? { "x-api-key": key } : {}) }, body: JSON.stringify({ text: "dashboard demo text" }) });
+  const hit = (key, path) => fetch(GW + path, { headers: key ? { "x-api-key": key } : {} });
+  const scan = key => fetch(GW + "/v1/demo/nsfw-check", { method: "POST", headers: { "content-type": "application/json", ...(key ? { "x-api-key": key } : {}) }, body: JSON.stringify({ text: "dashboard demo text" }) });
   async function storm(){ for (let i = 0; i < 12; i++) await scan(null); }
   setInterval(() => {
     if (!$("autoT").checked) return;
     Math.random() < 0.75 ? hit(null, "/v1/demo/ping") : scan(null);
   }, 900);
+
+  // ---------- visitor map (Leaflet + CARTO tiles, theme-aware) ----------
+  if (GW) $("admLink").href = GW + "/admin";
+  const lmap = L.map("map", { zoomControl: false, attributionControl: false }).setView([22, 10], 2);
+  let tiles = null;
+  function setTiles(){
+    if (tiles) lmap.removeLayer(tiles);
+    const dark = rootEl.dataset.theme === "dark";
+    tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, { maxZoom: 18 }).addTo(lmap);
+  }
+  setTiles();
+  const markers = L.layerGroup().addTo(lmap);
+  function updateMap(vs){
+    markers.clearLayers();
+    let located = 0;
+    for (const v of vs){
+      if (typeof v.lat !== "number") continue;
+      located++;
+      L.circleMarker([v.lat, v.lon], {
+        radius: Math.min(5 + Math.log2(v.count + 1) * 2, 16),
+        color: "#0d9488", weight: 1.5, fillColor: "#2dd4bf", fillOpacity: .45,
+      }).bindPopup(`<b>${v.ip}</b><br>${v.city ?? "?"}, ${v.country ?? "?"}<br>${v.count} requests`).addTo(markers);
+    }
+    const local = vs.filter(v => v.geo === "local").length;
+    $("visMeta").textContent = `${vs.length} unique · ${located} located${local ? ` · ${local} local` : ""}`;
+  }
+
+  // ---------- AI chat (Groq, grounded in live gateway state) ----------
+  const chatHistory = [];
+  $("chatFab").onclick = () => { $("chatbox").classList.toggle("open"); $("chatInput").focus(); };
+  $("chatInput").addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
+  function addMsg(role, text){
+    const div = document.createElement("div");
+    div.className = "m " + (role === "user" ? "user" : "ai");
+    div.textContent = text;
+    $("chatlog").appendChild(div);
+    $("chatlog").scrollTop = $("chatlog").scrollHeight;
+    return div;
+  }
+  async function sendChat(){
+    const q = $("chatInput").value.trim();
+    if (!q) return;
+    $("chatInput").value = "";
+    addMsg("user", q);
+    chatHistory.push({ role: "user", content: q });
+    const thinking = addMsg("ai", "…");
+    try{
+      const r = await fetch(GW + "/v1/ai/chat", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+        body: JSON.stringify({ messages: chatHistory }) });
+      const d = await r.json();
+      thinking.textContent = d.reply ?? "no answer";
+      chatHistory.push({ role: "assistant", content: thinking.textContent });
+      if (chatHistory.length > 16) chatHistory.splice(0, 2);
+    }catch{ thinking.textContent = "network error"; }
+  }
 </script>
 </body>
 </html>
