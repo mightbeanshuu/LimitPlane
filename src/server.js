@@ -13,11 +13,17 @@
 //      with zero restarts, is exactly what the Stripe webhook does in prod.
 
 import http from "node:http";
+import { readFileSync } from "node:fs";
 import { createLimitPlane } from "./gateway/limitPlane.js";
 import { createAutomations } from "./gateway/automations.js";
+import { createStats } from "./gateway/stats.js";
 import { createExplainer } from "./ai/aiExplainer.js";
 import { classifyText } from "./demo/nsfwStub.js";
 import { createBilling, TenantStore, PLANS } from "./billing/stripeBilling.js";
+
+// The dashboard is one self-contained HTML file, read once at boot.
+const dashboardHtml = readFileSync(new URL("./dashboard/dashboard.html", import.meta.url), "utf8");
+const logoSvg = readFileSync(new URL("../LimitPlane_Logo.svg", import.meta.url), "utf8");
 
 // ---- Policy: tiers mirror the plan catalog so billing and limiting agree ----
 // capacity/refill = burst protection (seconds); monthlyQuota = the plan (month).
@@ -50,8 +56,9 @@ const automations = createAutomations({
   explainer,
   getRecentEvents: () => lp.audit.recent(10), // audit context for the AI
 });
+const stats = createStats(); // live counters for the dashboard
 
-const lp = createLimitPlane({ policy, automations });
+const lp = createLimitPlane({ policy, automations, onDecision: stats.onDecision });
 
 // ---- Billing: live if env keys are set, honest demo mode if not -------------
 const tenantStore = new TenantStore({ tenants, file: process.env.TENANTS_FILE });
@@ -90,6 +97,19 @@ function sendJson(res, statusCode, body) {
 
 const server = http.createServer(async (req, res) => {
   const route = (req.url ?? "/").split("?")[0];
+
+  // ---- The live dashboard (and its logo) ------------------------------------
+  if (route === "/dashboard" || route === "/") {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.end(dashboardHtml);
+  }
+  if (route === "/logo.svg") {
+    res.setHeader("Content-Type", "image/svg+xml");
+    return res.end(logoSvg);
+  }
+  if (route === "/v1/admin/stats") {
+    return sendJson(res, 200, stats.snapshot({ banCheck: automations.banRemainingMs }));
+  }
 
   // ---- Billing routes: NOT rate limited. Never lock a customer out of the
   // door where they pay you or the page that tells them why they're blocked.
@@ -187,6 +207,7 @@ const server = http.createServer(async (req, res) => {
 const PORT = process.env.PORT ?? 3000;
 server.listen(PORT, () => {
   console.log(`LimitPlane demo gateway on http://localhost:${PORT}`);
+  console.log(`Live dashboard: http://localhost:${PORT}/dashboard`);
   console.log(`Billing: ${billing.liveMode ? "LIVE Stripe" : "demo mode (POST /v1/billing/simulate to flip tiers)"}`);
   console.log(`Keys: demo-free-key | demo-pro-key | demo-ent-key (or none = anonymous free tier)`);
 });

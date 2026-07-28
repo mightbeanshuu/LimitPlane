@@ -11,6 +11,7 @@ export { PolicyEngine, classifyCost, COST_CLASSES } from "./gateway/policyEngine
 export { AuditLog } from "./gateway/auditLog.js";
 export { createBilling, TenantStore, PLANS } from "./billing/stripeBilling.js";
 export { createAutomations } from "./gateway/automations.js";
+export { createStats } from "./gateway/stats.js";
 export { createExplainer } from "./ai/aiExplainer.js";
 export { MonthlyQuotaLimiter } from "./algorithms/monthlyQuotaLimiter.js";
 

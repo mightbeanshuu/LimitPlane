@@ -166,6 +166,22 @@ the "Zapier pattern" from Stripe's own SaaS guidance: flat monthly price,
 hard monthly cap, upgrade prompt at the cap. Stripe's newer Meters API
 (pay-per-use invoicing) is the natural later evolution.
 
+## Live dashboard
+
+```bash
+npm start          # then open http://localhost:3000/dashboard
+```
+
+Glass-and-neumorphism control room for the gateway: KPI tiles, a 60-second
+traffic chart, one card per connected site (tier chip, monthly plan meter,
+live cooldown badge), the decision feed, and the autopilot's actions with
+their AI notes. Poll-based (1.5s), single self-contained HTML file
+(`src/dashboard/dashboard.html`), no build step. Built-in traffic buttons
+let you demo everything: light pings, heavy scans, a retry-storm that gets
+auto-banned, and the free→pro upgrade flowing through the billing simulate
+endpoint. The proxy serves the same file at `/_limitplane/dashboard`, with
+data guarded by your `adminKey`.
+
 ## Automations: the autopilot
 
 `src/gateway/automations.js` watches the decision stream and acts with no

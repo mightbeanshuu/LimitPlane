@@ -27,7 +27,10 @@
 import http from "node:http";
 import https from "node:https";
 import { readFileSync, watchFile } from "node:fs";
-import { createLimitPlane, createAutomations, createExplainer } from "../src/index.js";
+import { createLimitPlane, createAutomations, createExplainer, createStats } from "../src/index.js";
+
+// The live dashboard travels with the proxy too (data guarded by adminKey).
+const dashboardHtml = readFileSync(new URL("../src/dashboard/dashboard.html", import.meta.url), "utf8");
 
 // ---- 1. Flags and (optional) config file ------------------------------------
 // Tiny flag parser: --config <path> --port <n> --upstream <url> --rpm <n> --heavy <paths>
@@ -124,8 +127,10 @@ const automations = createAutomations({
   getRecentEvents: () => (lp ? lp.audit.recent(10) : []),
 });
 
+const stats = createStats(); // survives reloads, same as the autopilot
+
 function buildGateway(cfg) {
-  return createLimitPlane({ policy: cfg.policy, automations });
+  return createLimitPlane({ policy: cfg.policy, automations, onDecision: stats.onDecision });
 }
 lp = buildGateway(config);
 
@@ -151,6 +156,12 @@ const server = http.createServer(async (req, res) => {
   // Optional admin peeks (decision diary + autopilot actions), guarded by a
   // shared secret. 404 to strangers so the endpoints don't advertise themselves.
   if (req.url?.startsWith("/_limitplane/")) {
+    // The dashboard HTML itself is harmless static markup — the DATA it polls
+    // is what's guarded. It asks for the admin key in the browser.
+    if (req.url.startsWith("/_limitplane/dashboard")) {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.end(dashboardHtml);
+    }
     if (!config.adminKey || req.headers["x-limitplane-admin"] !== config.adminKey) {
       res.statusCode = 404;
       return res.end();
@@ -158,6 +169,9 @@ const server = http.createServer(async (req, res) => {
     res.setHeader("Content-Type", "application/json");
     if (req.url.startsWith("/_limitplane/automations")) {
       return res.end(JSON.stringify(automations.recent(50), null, 2));
+    }
+    if (req.url.startsWith("/_limitplane/stats")) {
+      return res.end(JSON.stringify(stats.snapshot({ banCheck: automations.banRemainingMs }), null, 2));
     }
     return res.end(JSON.stringify(lp.audit.recent(50), null, 2));
   }
