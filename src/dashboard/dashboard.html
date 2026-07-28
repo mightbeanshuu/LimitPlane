@@ -158,6 +158,7 @@
   .chatin{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--glass-edge)}
   .chatin input{flex:1;border:none;background:transparent;color:var(--ink);font:13px var(--mono);outline:none;padding:8px 10px}
   .chatin button{border:none;cursor:pointer;font:700 14px var(--mono);color:var(--sky);background:transparent}
+  .m .srcs{margin-top:7px;padding-top:6px;border-top:1px solid var(--glass-edge);font:10.5px var(--mono);color:var(--faint);line-height:1.7}
 
   #login{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .35s}
   #login.gone{opacity:0;pointer-events:none}
@@ -598,7 +599,13 @@
         body: JSON.stringify({ messages: chatHistory }) });
       const d = await r.json();
       thinking.textContent = d.reply ?? "no answer";
-      chatHistory.push({ role: "assistant", content: thinking.textContent });
+      if (d.sources?.length){ // RAG receipts: the actual documents it read
+        const src = document.createElement("div");
+        src.className = "srcs";
+        src.textContent = d.sources.slice(0, 3).map(h => `⌕ ${h.text.slice(0, 90)}`).join("\n");
+        thinking.appendChild(src);
+      }
+      chatHistory.push({ role: "assistant", content: d.reply ?? "" });
       if (chatHistory.length > 16) chatHistory.splice(0, 2);
     }catch{ thinking.textContent = "network error"; }
   }

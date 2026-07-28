@@ -5,3 +5,4 @@ site/.vercel/
 .env
 .tenants.json
 .orgs.json
+.memory.jsonl

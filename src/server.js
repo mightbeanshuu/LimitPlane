@@ -19,6 +19,7 @@ import { createAutomations } from "./gateway/automations.js";
 import { createStats } from "./gateway/stats.js";
 import { createWsHub } from "./gateway/wsHub.js";
 import { createExplainer } from "./ai/aiExplainer.js";
+import { createMemory } from "./ai/memoryStore.js";
 import { classifyText } from "./demo/nsfwStub.js";
 import { createBilling, TenantStore, PLANS } from "./billing/stripeBilling.js";
 import { createAuth, sign } from "./auth/jwt.js";
@@ -58,10 +59,24 @@ const automations = createAutomations({
   alertWebhookUrl: process.env.ALERT_WEBHOOK_URL, // e.g. a Slack webhook
   explainer,
   getRecentEvents: () => lp.audit.recent(10), // audit context for the AI
-  onAction: (a) => push("action", a), // autopilot panel updates live
-  onNote: (a) => push("action_note", a), // the Groq note streams in when ready
+  onAction: (a) => {
+    memory.remember(`${when(a.at)} autopilot ${a.type}: ${a.message}`, { kind: "action", type: a.type });
+    push("action", a); // autopilot panel updates live
+  },
+  onNote: (a) => {
+    memory.remember(`${when(a.at)} AI note on ${a.type} (${a.tenantId ?? ""}): ${a.aiNote}`, { kind: "note", type: a.type });
+    push("action_note", a); // the Groq note streams in when ready
+  },
 });
 const stats = createStats(); // live counters for the dashboard
+
+// ---- RAG incident memory -------------------------------------------------------
+// Every NOTABLE event (blocks, autopilot actions, billing, onboarding) becomes
+// a retrievable document. The chatbot searches this before answering, so it
+// can cite real history instead of guessing. Allowed requests are noise and
+// stay out. See src/ai/memoryStore.js for the whole RAG pipeline.
+const memory = createMemory({ file: new URL("../.memory.jsonl", import.meta.url).pathname });
+const when = (t) => new Date(t).toISOString().slice(0, 16).replace("T", " ");
 
 // ---- Visitors: unique IPs, geolocated for the live map ------------------------
 // Geo comes from ip-api.com (free, server-side, cached per IP). Private and
@@ -125,6 +140,12 @@ const lp = createLimitPlane({
   onDecision: (e) => {
     stats.onDecision(e);
     trackVisitor(e.ip); // the map learns about every client
+    if (!e.allowed) {
+      memory.remember(
+        `${when(e.at)} ${e.tenantId} blocked on ${e.route}: ${e.reason} (tier ${e.tier}, cost ${e.cost}${e.monthlyUsed !== undefined ? `, monthly ${e.monthlyUsed} used` : ""}${e.ip ? `, ip ${e.ip}` : ""})`,
+        { kind: "block", tenantId: e.tenantId }
+      );
+    }
     push("decision", e); // live feed row, instantly
   },
 });
@@ -383,6 +404,7 @@ const server = http.createServer(async (req, res) => {
     const apiKey = body.apiKey ?? `lp_${randomBytes(9).toString("hex")}`;
     tenantStore.setTier(apiKey, tier, body.name);
     orgStore.addSite(orgId, body.name);
+    memory.remember(`${when(Date.now())} site ${body.name} connected on ${tier} tier (org ${orgId}) by ${claims.sub}`, { kind: "admin" });
     return sendJson(res, 201, {
       site: body.name,
       tier,
@@ -403,6 +425,7 @@ const server = http.createServer(async (req, res) => {
     const allowed = owningOrg ? canManageOrg(claims, owningOrg.id) : claims.role === "admin";
     if (!allowed) return sendJson(res, 403, { error: "not_your_org" });
     orgStore.removeSite(body.tenantId); // out of the org
+    memory.remember(`${when(Date.now())} site ${body.tenantId} disconnected by ${claims.sub}`, { kind: "admin" });
     const removed = tenantStore.removeByTenantId(body.tenantId); // keys gone
     stats.forget(body.tenantId); // card gone
     if (automations.banRemainingMs(body.tenantId) > 0) automations.unban(body.tenantId, claims.sub); // no ghost bans
@@ -417,6 +440,7 @@ const server = http.createServer(async (req, res) => {
     const apiKey = Object.keys(tenants).find((k) => tenants[k].tenantId === body.tenantId);
     if (!apiKey) return sendJson(res, 404, { error: "unknown_tenant", message: "Anonymous visitors have no account to re-tier." });
     if (!policy.tiers[body.tier]) return sendJson(res, 400, { error: "unknown_tier" });
+    memory.remember(`${when(Date.now())} ${body.tenantId} re-tiered to ${body.tier} by ${claims.sub}`, { kind: "admin" });
     return sendJson(res, 200, { updated: tenantStore.setTier(apiKey, body.tier), by: claims.sub });
   }
   if (route === "/v1/admin/tiers" && req.method === "POST") {
@@ -512,7 +536,7 @@ const server = http.createServer(async (req, res) => {
       role: m.role === "assistant" ? "assistant" : "user",
       content: String(m.content).slice(0, 800),
     }));
-    // Ground the model in what is ACTUALLY happening right now.
+    // Ground the model in what is ACTUALLY happening right now...
     const snap = stats.snapshot({ banCheck: automations.banRemainingMs });
     const context = {
       totals: snap.totals,
@@ -522,6 +546,10 @@ const server = http.createServer(async (req, res) => {
       autopilot: automations.recent(5),
       plans: PLANS,
     };
+    // ...AND in what happened before: RAG retrieval over the incident memory.
+    // Staff only — org users would see other orgs' incidents in there.
+    const lastQuestion = history.filter((m) => m.role === "user").at(-1)?.content ?? "";
+    const sources = claims.role === "user" ? [] : memory.search(lastQuestion, 6);
     try {
       const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
@@ -531,17 +559,29 @@ const server = http.createServer(async (req, res) => {
           temperature: 0.4,
           max_tokens: 300,
           messages: [
-            { role: "system", content: "You are LimitPlane's ops assistant. Answer questions about this rate-limiting gateway using ONLY the live state JSON provided. Be concise and concrete (numbers, tenant names, reasons). If asked something the data cannot answer, say so plainly. No markdown headers." },
+            { role: "system", content: "You are LimitPlane's ops assistant. Answer using ONLY the live state JSON and the retrieved history documents provided. When history documents [Hn] support your answer, mention the date from them. Be concise and concrete (numbers, tenant names, reasons). If the data cannot answer, say so plainly. No markdown headers." },
             { role: "system", content: "LIVE STATE: " + JSON.stringify(context) },
+            { role: "system", content: "RETRIEVED HISTORY: " + JSON.stringify(sources.map((h, i) => `[H${i + 1}] ${h.text}`)) },
             ...history,
           ],
         }),
       });
       const d = await r.json();
-      return sendJson(res, 200, { reply: d.choices?.[0]?.message?.content?.trim() ?? "No answer." });
+      return sendJson(res, 200, {
+        reply: d.choices?.[0]?.message?.content?.trim() ?? "No answer.",
+        sources, // the retrieved documents, so the UI can show receipts
+        memorySize: memory.size(),
+      });
     } catch {
-      return sendJson(res, 200, { reply: "AI chat hit a network error; try again." });
+      return sendJson(res, 200, { reply: "AI chat hit a network error; try again.", sources: [] });
     }
+  }
+
+  // Raw memory search, for debugging the RAG pipeline by hand.
+  if (route === "/v1/admin/memory") {
+    if (!requireRole(req, res, ["admin", "viewer"])) return;
+    const q = new URL(req.url, "http://x").searchParams.get("q") ?? "";
+    return sendJson(res, 200, { size: memory.size(), hits: memory.search(q, 10) });
   }
 
   // On-demand explanation of the latest blocked request, from real facts.
