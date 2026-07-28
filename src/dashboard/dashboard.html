@@ -13,6 +13,16 @@
     --shadow-dark:rgba(163,177,198,.5); --shadow-light:rgba(255,255,255,.95);
     --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
     --display:'Bricolage Grotesque',-apple-system,sans-serif;
+    --inner:rgba(255,255,255,.5);
+    --wash1:rgba(56,189,248,.16); --wash2:rgba(45,212,191,.14); --wash3:rgba(129,140,248,.12);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b1120; --ink:#e2e8f0; --dim:#94a3b8; --faint:#5d6b84;
+    --sky:#38bdf8; --teal:#2dd4bf; --rose:#fb7185; --amber:#fbbf24;
+    --glass:rgba(17,26,46,.58); --glass-edge:rgba(148,163,184,.16);
+    --inner:rgba(15,23,42,.55);
+    --shadow-dark:rgba(0,0,0,.55); --shadow-light:rgba(148,163,184,.06);
+    --wash1:rgba(56,189,248,.09); --wash2:rgba(45,212,191,.07); --wash3:rgba(129,140,248,.08);
   }
   *{margin:0;padding:0;box-sizing:border-box}
   body{
@@ -22,9 +32,13 @@
   }
   /* soft pastel washes behind the glass */
   body::before{content:"";position:fixed;inset:0;z-index:-1;background:
-    radial-gradient(560px 420px at 12% -6%,rgba(56,189,248,.16),transparent 65%),
-    radial-gradient(520px 420px at 88% 8%,rgba(45,212,191,.14),transparent 65%),
-    radial-gradient(640px 480px at 55% 110%,rgba(129,140,248,.12),transparent 65%)}
+    radial-gradient(560px 420px at 12% -6%,var(--wash1),transparent 65%),
+    radial-gradient(520px 420px at 88% 8%,var(--wash2),transparent 65%),
+    radial-gradient(640px 480px at 55% 110%,var(--wash3),transparent 65%)}
+  body{transition:background .3s,color .3s}
+  .iconbtn{width:38px;height:38px;border:none;border-radius:12px;cursor:pointer;background:var(--bg);color:var(--ink);font-size:15px;
+    box-shadow:5px 5px 11px var(--shadow-dark),-5px -5px 11px var(--shadow-light)}
+  .iconbtn:active{box-shadow:inset 4px 4px 8px var(--shadow-dark),inset -4px -4px 8px var(--shadow-light)}
 
   .wrap{max-width:1180px;margin:0 auto;padding:26px 24px 60px}
 
@@ -81,14 +95,14 @@
   .tenant .sub{font:11px var(--mono);color:var(--dim);display:flex;justify-content:space-between}
 
   .feed{max-height:330px;overflow-y:auto;display:flex;flex-direction:column;gap:7px}
-  .row{padding:9px 13px;border-radius:12px;font:12px var(--mono);display:flex;gap:10px;align-items:center;background:rgba(255,255,255,.5)}
+  .row{padding:9px 13px;border-radius:12px;font:12px var(--mono);display:flex;gap:10px;align-items:center;background:var(--inner)}
   .row.no{background:rgba(225,29,72,.06)}
   .row .st{font-weight:700;min-width:34px}
   .row.ok .st{color:var(--teal)} .row.no .st{color:var(--rose)}
   .row .rt{flex:1;color:var(--ink)} .row .who{color:var(--dim)} .row .why{color:var(--faint)}
 
   .acts{display:flex;flex-direction:column;gap:10px;max-height:330px;overflow-y:auto}
-  .act{padding:13px 15px;border-radius:14px;background:rgba(255,255,255,.5)}
+  .act{padding:13px 15px;border-radius:14px;background:var(--inner)}
   .act .t{font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
   .act .t.auto_cooldown{color:var(--rose)} .act .t.quota_alert{color:var(--amber)} .act .t.upgrade_nudge{color:var(--sky)}
   .act .m{font-size:12.5px;color:var(--dim)}
@@ -112,7 +126,7 @@
 
   <header>
     <div class="brand"><img src="/logo.svg" onerror="this.style.display='none'" alt="">LIMIT<span class="p">PLANE</span>&nbsp;<span style="font-weight:400;color:var(--dim);font-size:14px">/ live dashboard</span></div>
-    <div class="live glass"><span class="dot pulse" id="liveDot"></span><span id="liveTxt">connecting…</span></div>
+    <div style="display:flex;gap:10px;align-items:center"><div class="live glass"><span class="dot pulse" id="liveDot"></span><span id="liveTxt">connecting…</span></div><button class="iconbtn" id="themeBtn" title="toggle theme">◐</button></div>
   </header>
 
   <div class="keybox glass" id="keybox">
@@ -168,6 +182,13 @@
   // Two homes, one file: served by the demo gateway at /dashboard (open data
   // endpoints, traffic buttons shown) or by the proxy at /_limitplane/dashboard
   // (data guarded by the admin key, traffic buttons hidden).
+  const rootEl = document.documentElement;
+  rootEl.dataset.theme = localStorage.getItem("lp_theme") ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.getElementById("themeBtn").onclick = () => {
+    rootEl.dataset.theme = rootEl.dataset.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("lp_theme", rootEl.dataset.theme);
+  };
+
   const PROXY = location.pathname.startsWith("/_limitplane");
   const BASE = PROXY ? "/_limitplane" : "/v1/admin";
   let adminKey = localStorage.getItem("lp_admin_key") ?? "";

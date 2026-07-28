@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LimitPlane · Live Dashboard</title>
+<meta name="description" content="LimitPlane control room: connected sites, plan meters, decision feed, autopilot. Real algorithms running live in your browser.">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#eef2f8; --ink:#1c2940; --dim:#5d6b84; --faint:#93a0b6;
+    --sky:#0284c7; --teal:#0d9488; --rose:#e11d48; --amber:#d97706;
+    --glass:rgba(255,255,255,.6); --glass-edge:rgba(255,255,255,.85);
+    --inner:rgba(255,255,255,.5); --inner2:rgba(255,255,255,.75);
+    --shadow-dark:rgba(163,177,198,.5); --shadow-light:rgba(255,255,255,.95);
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --display:'Bricolage Grotesque',-apple-system,sans-serif;
+    --wash1:rgba(56,189,248,.16); --wash2:rgba(45,212,191,.13); --wash3:rgba(129,140,248,.12);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b1120; --ink:#e2e8f0; --dim:#94a3b8; --faint:#5d6b84;
+    --sky:#38bdf8; --teal:#2dd4bf; --rose:#fb7185; --amber:#fbbf24;
+    --glass:rgba(17,26,46,.58); --glass-edge:rgba(148,163,184,.16);
+    --inner:rgba(15,23,42,.55); --inner2:rgba(15,23,42,.8);
+    --shadow-dark:rgba(0,0,0,.55); --shadow-light:rgba(148,163,184,.06);
+    --wash1:rgba(56,189,248,.09); --wash2:rgba(45,212,191,.07); --wash3:rgba(129,140,248,.08);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:var(--bg);color:var(--ink);min-height:100vh;
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;overflow-x:hidden;transition:background .3s,color .3s;
+  }
+  body::before{content:"";position:fixed;inset:0;z-index:-2;background:
+    radial-gradient(560px 420px at 12% -6%,var(--wash1),transparent 65%),
+    radial-gradient(520px 420px at 88% 8%,var(--wash2),transparent 65%),
+    radial-gradient(640px 480px at 55% 110%,var(--wash3),transparent 65%)}
+  #three-bg{position:fixed;inset:0;z-index:-1;opacity:.55;pointer-events:none}
+  a{color:var(--sky);text-decoration:none}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:24px 24px 60px}
+  .glass{background:var(--glass);backdrop-filter:blur(18px) saturate(1.5);-webkit-backdrop-filter:blur(18px) saturate(1.5);
+    border:1px solid var(--glass-edge);border-radius:20px;box-shadow:0 10px 34px rgba(15,25,55,.10)}
+  .neo{background:var(--bg);border-radius:18px;box-shadow:7px 7px 15px var(--shadow-dark),-7px -7px 15px var(--shadow-light)}
+  .neo-in{background:var(--bg);border-radius:14px;box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+  .brand{display:flex;align-items:center;gap:11px;font-family:var(--display);font-weight:700;font-size:18px;letter-spacing:.05em}
+  .brand img{width:36px;height:36px;border-radius:10px}
+  .brand .p{color:var(--sky)}
+  .brand small{font-weight:400;color:var(--dim);font-size:13px}
+  .hright{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .live{display:flex;align-items:center;gap:8px;font:12px var(--mono);color:var(--dim);padding:9px 15px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--teal);animation:pulse 1.6s ease infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  .iconbtn{width:40px;height:40px;border:none;border-radius:13px;cursor:pointer;background:var(--bg);color:var(--ink);font-size:16px;
+    box-shadow:5px 5px 11px var(--shadow-dark),-5px -5px 11px var(--shadow-light)}
+  .iconbtn:active{box-shadow:inset 4px 4px 8px var(--shadow-dark),inset -4px -4px 8px var(--shadow-light)}
+  .userchip{display:flex;align-items:center;gap:9px;padding:7px 8px 7px 14px;font:12px var(--mono);color:var(--dim)}
+  .userchip b{color:var(--ink);font-weight:600}
+  .userchip button{border:none;cursor:pointer;font:600 11px var(--mono);color:var(--rose);background:transparent;padding:6px 8px}
+
+  .banner{font:12px var(--mono);color:var(--dim);padding:11px 16px;margin-bottom:18px;display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+  .banner b{color:var(--teal)}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:20px}
+  .kpi{padding:17px 19px}
+  .kpi .lbl{font:11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+  .kpi .val{font-family:var(--display);font-size:29px;font-weight:700;margin-top:3px}
+  .kpi.good .val{color:var(--teal)} .kpi.bad .val{color:var(--rose)} .kpi.warn .val{color:var(--amber)}
+
+  .panel{padding:20px 22px;margin-bottom:18px}
+  .panel h2{font-family:var(--display);font-size:16px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;margin-bottom:13px;gap:10px;flex-wrap:wrap}
+  .panel h2 span{font:11px var(--mono);color:var(--faint);letter-spacing:.06em;font-weight:400}
+  .grid{display:grid;grid-template-columns:1.5fr 1fr;gap:18px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+
+  .chart{display:flex;align-items:flex-end;gap:2px;height:104px;padding:10px 12px}
+  .col{flex:1;display:flex;flex-direction:column-reverse;gap:1px;height:100%}
+  .col i{display:block;width:100%;border-radius:2px;transform-origin:bottom;height:100%}
+  .col .ok{background:var(--teal);opacity:.72} .col .no{background:var(--rose);opacity:.8}
+
+  .tenants{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+  .tenant{padding:16px 18px;border-radius:16px}
+  .tenant .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px}
+  .tenant .id{font:600 12.5px var(--mono);word-break:break-all}
+  .chip{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:4px 9px;border-radius:99px;white-space:nowrap}
+  .chip.free{background:rgba(120,130,150,.16);color:var(--dim)}
+  .chip.pro{background:rgba(2,132,199,.16);color:var(--sky)}
+  .chip.enterprise{background:rgba(13,148,136,.18);color:var(--teal)}
+  .chip.ban{background:rgba(225,29,72,.15);color:var(--rose)}
+  .meter{height:9px;border-radius:6px;overflow:hidden;margin:8px 0 6px}
+  .meter i{display:block;height:100%;width:100%;transform-origin:left;border-radius:6px;background:linear-gradient(90deg,var(--teal),var(--sky));transition:transform .4s ease}
+  .meter i.hot{background:linear-gradient(90deg,var(--amber),var(--rose))}
+  .tenant .sub{font:11px var(--mono);color:var(--dim);display:flex;justify-content:space-between;gap:6px}
+  .tenant .upbtn{margin-top:10px;width:100%;border:none;cursor:pointer;font:600 11.5px var(--mono);color:var(--sky);padding:9px;border-radius:11px;background:var(--bg);
+    box-shadow:4px 4px 9px var(--shadow-dark),-4px -4px 9px var(--shadow-light)}
+  .tenant .upbtn:active{box-shadow:inset 3px 3px 7px var(--shadow-dark),inset -3px -3px 7px var(--shadow-light)}
+
+  .feed{max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:7px}
+  .row{padding:9px 13px;border-radius:12px;font:12px var(--mono);display:flex;gap:10px;align-items:center;background:var(--inner)}
+  .row.no{background:rgba(225,29,72,.07)}
+  .row .st{font-weight:700;min-width:34px}
+  .row.ok .st{color:var(--teal)} .row.no .st{color:var(--rose)}
+  .row .rt{flex:1;color:var(--ink);word-break:break-all} .row .who{color:var(--dim)} .row .why{color:var(--faint)}
+
+  .acts{display:flex;flex-direction:column;gap:10px;max-height:320px;overflow-y:auto}
+  .act{padding:13px 15px;border-radius:14px;background:var(--inner)}
+  .act .t{font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
+  .act .t.auto_cooldown{color:var(--rose)} .act .t.quota_alert{color:var(--amber)} .act .t.upgrade_nudge{color:var(--sky)} .act .t.billing{color:var(--teal)}
+  .act .m{font-size:12.5px;color:var(--dim)}
+  .act .ai{margin-top:7px;font-size:12px;color:var(--ink);background:rgba(56,189,248,.1);border-radius:9px;padding:8px 10px}
+  .act .ai::before{content:"NOTE · ";font:10px var(--mono);color:var(--sky);letter-spacing:.1em}
+
+  .plansrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+  .planc{padding:16px 18px;border-radius:16px;text-align:center}
+  .planc .nm{font:700 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+  .planc .pr{font-family:var(--display);font-size:26px;font-weight:700;margin:6px 0 2px}
+  .planc .qt{font:11px var(--mono);color:var(--teal)}
+
+  /* ---------- login ---------- */
+  #login{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .35s}
+  #login.gone{opacity:0;pointer-events:none}
+  .logincard{width:min(400px,92vw);padding:34px 32px;text-align:center}
+  .logincard img{width:56px;height:56px;border-radius:14px;margin-bottom:14px}
+  .logincard h1{font-family:var(--display);font-size:22px;font-weight:700;margin-bottom:4px}
+  .logincard p{color:var(--dim);font-size:13px;margin-bottom:22px}
+  .field{display:block;width:100%;margin-bottom:12px;padding:13px 15px;border:none;border-radius:13px;background:var(--bg);color:var(--ink);font:13.5px var(--mono);outline:none;
+    box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+  .loginbtn{width:100%;border:none;cursor:pointer;padding:14px;border-radius:13px;font:600 14px inherit;color:#fff;background:linear-gradient(90deg,var(--sky),var(--teal));margin-top:4px}
+  .hint{margin-top:14px;font:11px var(--mono);color:var(--faint)}
+  .lerr{color:var(--rose);font:11.5px var(--mono);min-height:16px;margin-top:8px}
+
+  footer{color:var(--faint);font:12px var(--mono);text-align:center;padding-top:8px}
+</style>
+</head>
+<body>
+
+<canvas id="three-bg"></canvas>
+
+<!-- ================= LOGIN GATE ================= -->
+<div id="login">
+  <div class="logincard glass">
+    <img src="logo.svg" alt="LimitPlane">
+    <h1>LIMIT<span style="color:var(--sky)">PLANE</span></h1>
+    <p>Sign in to the gateway control room</p>
+    <input class="field" id="lEmail" type="email" placeholder="email" autocomplete="username">
+    <input class="field" id="lPass" type="password" placeholder="password" autocomplete="current-password">
+    <button class="loginbtn" onclick="doLogin()">Log in</button>
+    <div class="lerr" id="lErr"></div>
+    <div class="hint">demo access: demo@limitplane.dev · demo123</div>
+  </div>
+</div>
+
+<!-- ================= DASHBOARD ================= -->
+<div class="wrap" id="app" style="display:none">
+  <header>
+    <div class="brand"><img src="logo.svg" alt="">LIMIT<span class="p">PLANE</span>&nbsp;<small>/ control room</small></div>
+    <div class="hright">
+      <div class="live glass"><span class="dot"></span><span>live · real algorithms in-browser</span></div>
+      <button class="iconbtn" id="themeBtn" title="toggle theme">◐</button>
+      <div class="userchip glass"><span>signed in as <b id="whoami"></b></span><button onclick="doLogout()">logout</button></div>
+    </div>
+  </header>
+
+  <div class="banner glass">Connected sites are <b>Anshu's real deployed projects</b>; their traffic here is a labeled demo replay driven by the same token-bucket, monthly-quota and autopilot code the gateway runs server-side. Wire a site for real with <a href="https://github.com/mightbeanshuu/LimitPlane">one npx command</a>.</div>
+
+  <div class="kpis">
+    <div class="kpi neo"><div class="lbl">Total checks</div><div class="val" id="kChecks">0</div></div>
+    <div class="kpi neo good"><div class="lbl">Allowed</div><div class="val" id="kAllowed">0</div></div>
+    <div class="kpi neo bad"><div class="lbl">Blocked</div><div class="val" id="kBlocked">0</div></div>
+    <div class="kpi neo warn"><div class="lbl">Active cooldowns</div><div class="val" id="kBans">0</div></div>
+    <div class="kpi neo"><div class="lbl">Monthly revenue</div><div class="val" id="kRev">$0</div></div>
+  </div>
+
+  <div class="panel glass">
+    <h2>Traffic <span>last 60 seconds · green allowed / red blocked</span></h2>
+    <div class="chart neo-in" id="chart"></div>
+  </div>
+
+  <div class="panel glass">
+    <h2>Connected sites <span>plan meter fills as the month is spent · upgrades use the Stripe webhook flow</span></h2>
+    <div class="tenants" id="tenants"></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel glass">
+      <h2>Decision feed <span>newest first</span></h2>
+      <div class="feed" id="feed"></div>
+    </div>
+    <div class="panel glass">
+      <h2>Autopilot <span>alerts, nudges, cooldowns, billing</span></h2>
+      <div class="acts" id="acts"></div>
+    </div>
+  </div>
+
+  <div class="panel glass">
+    <h2>Plans <span>flat price, hard monthly cap, Stripe-automated</span></h2>
+    <div class="plansrow">
+      <div class="planc neo"><div class="nm">Free</div><div class="pr">$0<small style="font-size:12px;color:var(--faint)">/mo</small></div><div class="qt">1,000 units</div></div>
+      <div class="planc neo"><div class="nm">Pro</div><div class="pr">$19<small style="font-size:12px;color:var(--faint)">/mo</small></div><div class="qt">50,000 units</div></div>
+      <div class="planc neo"><div class="nm">Enterprise</div><div class="pr">$199<small style="font-size:12px;color:var(--faint)">/mo</small></div><div class="qt">1,000,000 units</div></div>
+    </div>
+  </div>
+
+  <footer>LIMITPLANE · <a href="/">home</a> · <a href="https://github.com/mightbeanshuu/LimitPlane">github</a></footer>
+</div>
+
+<script>
+/* ============ theme ============ */
+const root = document.documentElement;
+const savedTheme = localStorage.getItem("lp_theme");
+root.dataset.theme = savedTheme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+document.getElementById("themeBtn").onclick = () => {
+  root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+  localStorage.setItem("lp_theme", root.dataset.theme);
+  window.themeThree?.(); // recolor the 3D scene too (set by the module below)
+};
+
+/* ============ demo auth (client-side gate, labeled) ============ */
+const $ = id => document.getElementById(id);
+function doLogin(){
+  const e = $("lEmail").value.trim(), p = $("lPass").value;
+  if (e === "demo@limitplane.dev" && p === "demo123"){
+    localStorage.setItem("lp_user", e);
+    enter(e);
+  } else {
+    $("lErr").textContent = "wrong credentials · use the demo access below";
+  }
+}
+function doLogout(){
+  localStorage.removeItem("lp_user");
+  $("app").style.display = "none";
+  $("login").classList.remove("gone");
+}
+function enter(user){
+  $("whoami").textContent = user.split("@")[0];
+  $("login").classList.add("gone");
+  $("app").style.display = "block";
+}
+$("lPass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+if (localStorage.getItem("lp_user")) enter(localStorage.getItem("lp_user"));
+
+/* ============ the REAL algorithms (same math as src/algorithms) ============ */
+class Bucket {
+  constructor(capacity, refillPerSec){ this.cap = capacity; this.rate = refillPerSec/1000; this.tokens = capacity; this.last = performance.now(); }
+  check(cost){
+    const t = performance.now();
+    this.tokens = Math.min(this.tokens + (t - this.last) * this.rate, this.cap);
+    this.last = t;
+    if (this.tokens >= cost){ this.tokens -= cost; return true; }
+    return false;
+  }
+}
+const TIERS = {
+  free: { cap: 10, refill: 1, quota: 1000, usd: 0 },
+  pro: { cap: 50, refill: 5, quota: 50000, usd: 19 },
+  enterprise: { cap: 300, refill: 30, quota: 1000000, usd: 199 },
+};
+const COST = { light: 1, standard: 2, heavy: 5 };
+
+/* Anshu's real deployed projects as the connected sites. Traffic replay is
+   seeded mid-month so the meters tell a story from the first second. */
+const SITES = [
+  { id: "dormdoc.vercel.app", note: "auth: supabase login/logout", tier: "pro", seedPct: .38, rps: .9, heavy: .25, route: "/api/auth" },
+  { id: "visualise.vercel.app", note: "auth: supabase gate", tier: "free", seedPct: .86, rps: .7, heavy: .2, route: "/api/progress" },
+  { id: "parkpulse-six.vercel.app", note: "enforcement engine", tier: "enterprise", seedPct: .21, rps: 1.5, heavy: .45, route: "/api/priority-scan" },
+  { id: "murmur (agent swarm)", note: "orchestrator", tier: "pro", seedPct: .55, rps: .8, heavy: .5, route: "/api/agents/run" },
+  { id: "bellwether (signals)", note: "trading CLI", tier: "free", seedPct: .42, rps: .5, heavy: .3, route: "/api/regime" },
+  { id: "smart-reco-engine", note: "MERN team project", tier: "free", seedPct: .63, rps: .6, heavy: .35, route: "/api/recommend" },
+];
+const state = SITES.map(s => ({
+  ...s,
+  bucket: new Bucket(TIERS[s.tier].cap, TIERS[s.tier].refill),
+  used: Math.floor(TIERS[s.tier].quota * s.seedPct),
+  ok: 0, blocked: 0, capHits: 0, bannedUntil: 0,
+  alerted80: TIERS[s.tier].quota ? (s.seedPct >= .8) : false, nudged: false,
+}));
+let anon = null; // the occasional stormer
+const totals = { checks: 0, ok: 0, blocked: 0 };
+const buckets60 = Array.from({ length: 60 }, () => ({ ok: 0, no: 0 }));
+let curSec = Math.floor(Date.now() / 1000);
+const feed = [], acts = [];
+
+function pushAct(type, message, ai){
+  acts.unshift({ type, message, ai });
+  if (acts.length > 12) acts.pop();
+}
+function record(site, allowed, route, why, cls){
+  totals.checks++; totals[allowed ? "ok" : "blocked"]++;
+  const sec = Math.floor(Date.now() / 1000);
+  if (sec !== curSec){ const shift = Math.min(sec - curSec, 60); for (let i = 0; i < shift; i++){ buckets60.shift(); buckets60.push({ ok: 0, no: 0 }); } curSec = sec; }
+  buckets60[59][allowed ? "ok" : "no"]++;
+  feed.unshift({ allowed, route, who: site, why, cls });
+  if (feed.length > 14) feed.pop();
+}
+
+/* one simulated request through the two-meter pipeline */
+function request(s){
+  const heavy = Math.random() < s.heavy;
+  const cls = heavy ? "heavy" : (Math.random() < .3 ? "standard" : "light");
+  const cost = COST[cls];
+  const tier = TIERS[s.tier];
+
+  if (s.bannedUntil > Date.now()){ record(s.id, false, s.route, "auto_cooldown", cls); s.blocked++; return; }
+
+  if (s.used + cost > tier.quota){ // monthly cap
+    s.blocked++; s.capHits++;
+    record(s.id, false, s.route, "monthly_quota", cls);
+    if (s.capHits === 3 && !s.nudged){
+      s.nudged = true;
+      pushAct("upgrade_nudge", `${s.id} hit their monthly cap 3 times.`,
+        `${s.id} keeps exhausting the ${s.tier} plan (${tier.quota.toLocaleString()} units). Recommend the next tier before their users feel it.`);
+    }
+    return;
+  }
+  if (!s.bucket.check(cost)){ // burst
+    s.blocked++;
+    record(s.id, false, s.route, "burst", cls);
+    return;
+  }
+  s.used += cost; s.ok++;
+  record(s.id, true, s.route, "", cls);
+  const pct = s.used / tier.quota;
+  if (pct >= .8 && !s.alerted80){
+    s.alerted80 = true;
+    pushAct("quota_alert", `${s.id} crossed 80% of this month's plan.`,
+      `${s.id} is at ${(pct * 100).toFixed(0)}% with days left in the cycle. At the current pace they run dry early; consider a proactive upgrade prompt.`);
+  }
+}
+
+/* occasional anonymous retry-storm that the autopilot bans */
+function maybeStorm(){
+  if (anon || Math.random() > .012) return;
+  const ip = `anon:203.0.113.${Math.floor(Math.random() * 200) + 10}`;
+  anon = { id: ip, bucket: new Bucket(10, 1), count: 0, blockedRun: 0 };
+  const iv = setInterval(() => {
+    if (!anon) return clearInterval(iv);
+    anon.count++;
+    const passed = anon.bucket.check(5);
+    record(ip, passed, "/v1/demo/nsfw-check", passed ? "" : "burst", "heavy");
+    if (!passed && ++anon.blockedRun >= 10){
+      clearInterval(iv);
+      pushAct("auto_cooldown", `${ip} burst-blocked 10x in seconds. Auto-banned 60s; auto-unbans.`,
+        `Rapid identical failures from ${ip} look like a retry loop without backoff, not a person. Cooled down automatically; no engineer paged.`);
+      const banned = { id: ip, banExpiry: Date.now() + 60000 };
+      bannedAnons.push(banned);
+      setTimeout(() => { bannedAnons.splice(bannedAnons.indexOf(banned), 1); anon = null; }, 61000);
+    }
+    if (anon && anon.count > 40){ clearInterval(iv); anon = null; }
+  }, 260);
+}
+const bannedAnons = [];
+
+/* Stripe upgrade: same shape as the checkout.session.completed webhook */
+function upgrade(i){
+  const s = state[i];
+  const next = s.tier === "free" ? "pro" : "enterprise";
+  if (s.tier === "enterprise") return;
+  s.tier = next;
+  s.bucket = new Bucket(TIERS[next].cap, TIERS[next].refill);
+  s.capHits = 0; s.nudged = false; s.alerted80 = s.used / TIERS[next].quota >= .8;
+  pushAct("billing", `Stripe webhook: checkout.session.completed → ${s.id} upgraded to ${next}.`,
+    `Payment verified by signature, tier flipped in the tenant store, and the very next request is limited under ${next}. No restart, no human.`);
+}
+
+/* ============ painting ============ */
+const fmt = n => n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
+function paint(){
+  $("kChecks").textContent = fmt(totals.checks);
+  $("kAllowed").textContent = fmt(totals.ok);
+  $("kBlocked").textContent = fmt(totals.blocked);
+  $("kBans").textContent = bannedAnons.length + state.filter(s => s.bannedUntil > Date.now()).length;
+  $("kRev").textContent = "$" + state.reduce((a, s) => a + TIERS[s.tier].usd, 0);
+
+  const peak = Math.max(1, ...buckets60.map(b => b.ok + b.no));
+  $("chart").innerHTML = buckets60.map(b => `<div class="col">
+    <i class="ok" style="transform:scaleY(${(b.ok / peak).toFixed(3)})"></i>
+    <i class="no" style="transform:scaleY(${(b.no / peak).toFixed(3)})"></i></div>`).join("");
+
+  $("tenants").innerHTML = state.map((s, i) => {
+    const tier = TIERS[s.tier], pct = Math.min(s.used / tier.quota, 1);
+    return `<div class="tenant neo">
+      <div class="top"><span class="id">${s.id}</span><span class="chip ${s.tier}">${s.tier}</span></div>
+      <div class="meter neo-in"><i class="${pct > .8 ? "hot" : ""}" style="transform:scaleX(${pct.toFixed(3)})"></i></div>
+      <div class="sub"><span>${fmt(s.used)} / ${fmt(tier.quota)} units</span><span>${fmt(s.ok)} ok · ${fmt(s.blocked)} blk</span></div>
+      <div class="sub" style="margin-top:3px"><span style="color:var(--faint)">${s.note}</span></div>
+      ${s.tier !== "enterprise" ? `<button class="upbtn" onclick="upgrade(${i})">Upgrade via Stripe → ${s.tier === "free" ? "pro" : "enterprise"}</button>` : ""}
+    </div>`;
+  }).join("") + bannedAnons.map(b => `<div class="tenant neo">
+      <div class="top"><span class="id">${b.id}</span><span class="chip ban">cooldown ${Math.max(0, Math.ceil((b.banExpiry - Date.now()) / 1000))}s</span></div>
+      <div class="sub"><span>autopilot ban · lifts itself</span></div></div>`).join("");
+
+  $("feed").innerHTML = feed.map(e => `<div class="row ${e.allowed ? "ok" : "no"}">
+    <span class="st">${e.allowed ? "200" : "429"}</span><span class="rt">${e.route}</span>
+    <span class="who">${e.who}</span><span class="why">${e.allowed ? e.cls : e.why}</span></div>`).join("");
+
+  $("acts").innerHTML = acts.length ? acts.map(a => `<div class="act">
+    <div class="t ${a.type}">${a.type.replace(/_/g, " ")}</div><div class="m">${a.message}</div>
+    ${a.ai ? `<div class="ai">${a.ai}</div>` : ""}</div>`).join("")
+    : `<div style="color:var(--faint);font:12px var(--mono)">Watching. Nothing has needed doing yet.</div>`;
+}
+
+/* the heartbeat: each site sends traffic per its personality */
+setInterval(() => {
+  state.forEach(s => { if (Math.random() < s.rps * .35) request(s); });
+  maybeStorm();
+}, 350);
+setInterval(paint, 600);
+paint();
+
+/* three.js scene below registers window.themeThree for the toggle */
+</script>
+<script type="module">
+  import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+  const canvas = document.getElementById("three-bg");
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(55, 1, .1, 100);
+  cam.position.set(0, 1.2, 11);
+
+  // the limit plane itself: a thin glowing sheet the traffic must cross
+  const planeGeo = new THREE.PlaneGeometry(30, 5, 40, 8);
+  const planeMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: .07, wireframe: true });
+  const plane = new THREE.Mesh(planeGeo, planeMat);
+  plane.rotation.x = -Math.PI / 2.25;
+  plane.position.y = .6;
+  scene.add(plane);
+
+  // request particles: teal ones pass, a few turn rose and fall back
+  const N = 260;
+  const pos = new Float32Array(N * 3), vel = new Float32Array(N), col = new Float32Array(N * 3);
+  const TEAL = new THREE.Color(0x2dd4bf), ROSE = new THREE.Color(0xf43f5e);
+  function seed(i, low){
+    pos[i * 3] = (Math.random() - .5) * 26;
+    pos[i * 3 + 1] = low ? -6 - Math.random() * 3 : -6 + Math.random() * 12;
+    pos[i * 3 + 2] = (Math.random() - .5) * 6;
+    vel[i] = .012 + Math.random() * .02;
+    TEAL.toArray(col, i * 3);
+  }
+  for (let i = 0; i < N; i++) seed(i, false);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  const mat = new THREE.PointsMaterial({ size: .09, vertexColors: true, transparent: true, opacity: .8 });
+  scene.add(new THREE.Points(geo, mat));
+
+  window.themeThree = () => { // soften everything in light mode
+    const dark = document.documentElement.dataset.theme === "dark";
+    mat.opacity = dark ? .85 : .5;
+    planeMat.opacity = dark ? .1 : .06;
+  };
+  window.themeThree();
+
+  let mx = 0;
+  addEventListener("pointermove", e => { mx = (e.clientX / innerWidth - .5); });
+  function resize(){
+    renderer.setSize(innerWidth, innerHeight, false);
+    cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
+  }
+  addEventListener("resize", resize); resize();
+
+  (function loop(){
+    requestAnimationFrame(loop);
+    for (let i = 0; i < N; i++){
+      pos[i * 3 + 1] += vel[i];
+      const y = pos[i * 3 + 1];
+      if (vel[i] > 0 && y > .6 && y < .7 && Math.random() < .18){
+        vel[i] = -vel[i] * 1.4; // bounced off the limit plane
+        ROSE.toArray(col, i * 3);
+        geo.attributes.color.needsUpdate = true;
+      }
+      if (y > 8 || y < -10) { seed(i, true); geo.attributes.color.needsUpdate = true; }
+    }
+    geo.attributes.position.needsUpdate = true;
+    cam.position.x += (mx * 2.2 - cam.position.x) * .04;
+    cam.lookAt(0, .5, 0);
+    plane.rotation.z += .0006;
+    renderer.render(scene, cam);
+  })();
+</script>
+</body>
+</html>
