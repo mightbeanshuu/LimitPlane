@@ -147,7 +147,7 @@
   <div class="logincard glass">
     <img src="logo.svg" alt="LimitPlane">
     <h1>LIMIT<span style="color:var(--sky)">PLANE</span></h1>
-    <p>Sign in to the gateway control room</p>
+    <p>Sign in</p>
     <input class="field" id="lEmail" type="email" placeholder="email" autocomplete="username">
     <input class="field" id="lPass" type="password" placeholder="password" autocomplete="current-password">
     <button class="loginbtn" onclick="doLogin()">Log in</button>
@@ -167,7 +167,7 @@
     </div>
   </header>
 
-  <div class="banner glass"><b>visualise.vercel.app is genuinely connected</b>: its production pages carry a LimitPlane beacon reporting page views to the gateway. This hosted demo replays traffic through the same algorithms; run the gateway locally (<a href="https://github.com/mightbeanshuu/LimitPlane">npm start</a>) to watch the real hits arrive over SSE.</div>
+  <div class="banner glass"><b>visualise.vercel.app</b> connected · demo traffic replay through the real engine</div>
 
   <div class="kpis">
     <div class="kpi neo"><div class="lbl">Total checks</div><div class="val" id="kChecks">0</div></div>
@@ -178,28 +178,28 @@
   </div>
 
   <div class="panel glass">
-    <h2>Traffic <span>last 60 seconds · green allowed / red blocked</span></h2>
+    <h2>Traffic <span>last 60s</span></h2>
     <div class="chartwrap neo-in"><canvas id="chartCanvas"></canvas></div>
   </div>
 
   <div class="panel glass">
-    <h2>Connected sites <span>plan meter fills as the month is spent · upgrades use the Stripe webhook flow</span></h2>
+    <h2>Connected sites</h2>
     <div class="tenants" id="tenants"></div>
   </div>
 
   <div class="grid">
     <div class="panel glass">
-      <h2>Decision feed <span>newest first</span></h2>
+      <h2>Decision feed</h2>
       <div class="feed" id="feed"></div>
     </div>
     <div class="panel glass">
-      <h2>Autopilot <span>alerts, nudges, cooldowns, billing</span></h2>
+      <h2>Autopilot</h2>
       <div class="acts" id="acts"></div>
     </div>
   </div>
 
   <div class="panel glass">
-    <h2>Plans <span>flat price, hard monthly cap, Stripe-automated</span></h2>
+    <h2>Plans</h2>
     <div class="plansrow">
       <div class="planc neo"><div class="nm">Free</div><div class="pr">$0<small style="font-size:12px;color:var(--faint)">/mo</small></div><div class="qt">1,000 units</div></div>
       <div class="planc neo"><div class="nm">Pro</div><div class="pr">$19<small style="font-size:12px;color:var(--faint)">/mo</small></div><div class="qt">50,000 units</div></div>
@@ -334,7 +334,7 @@ const COST = { light: 1, standard: 2, heavy: 5 };
 const SITES = [
   // The one real connected site: visualise.vercel.app carries a LimitPlane
   // beacon in production (auth.js) reporting page views to a local gateway.
-  { id: "visualise.vercel.app", note: "beacon live in prod · pages report to the gateway", tier: "pro", seedPct: .12, rps: .8, heavy: .2, route: "/graphs/" },
+  { id: "visualise.vercel.app", note: "beacon live", tier: "pro", seedPct: .12, rps: .8, heavy: .2, route: "/graphs/" },
 ];
 const state = SITES.map(s => ({
   ...s,
@@ -350,8 +350,12 @@ let curSec = Math.floor(Date.now() / 1000);
 const feed = [], acts = [];
 
 function pushAct(type, message, ai){
-  acts.unshift({ type, message, ai });
+  const rec = { type, message, ai };
+  acts.unshift(rec);
   if (acts.length > 12) acts.pop();
+  fetch("/api/explain", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: { type, message }, recent: feed.slice(0, 8) }) })
+    .then(r => r.json()).then(d => { if (d.note){ rec.ai = d.note; paint(); } }).catch(() => {});
 }
 function record(site, allowed, route, why, cls){
   totals.checks++; totals[allowed ? "ok" : "blocked"]++;

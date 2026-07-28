@@ -160,7 +160,7 @@
   <div class="logincard glass">
     <img src="/logo.svg" onerror="this.style.display='none'" alt="">
     <h1>LIMIT<span style="color:var(--sky)">PLANE</span></h1>
-    <p>Sign in · roles are enforced by JWT server-side</p>
+    <p>Sign in</p>
     <input class="field" id="lEmail" type="email" placeholder="email" autocomplete="username">
     <input class="field" id="lPass" type="password" placeholder="password" autocomplete="current-password">
     <button class="loginbtn" onclick="doLogin()">Log in</button>
@@ -196,12 +196,12 @@
   </div>
 
   <div class="panel glass">
-    <h2>Traffic <span>last 60 seconds · green allowed / red blocked</span></h2>
+    <h2>Traffic <span>last 60s</span></h2>
     <div class="chartwrap neo-in"><canvas id="chartCanvas"></canvas></div>
   </div>
 
   <div class="panel glass" id="addPanel" style="display:none">
-    <h2>Add a site <span>generates an API key + a beacon snippet to paste into the site</span></h2>
+    <h2>Add a site</h2>
     <div class="addsite">
       <input id="siteName" placeholder="site name, e.g. visualise.vercel.app">
       <select id="siteTier"><option>free</option><option>pro</option><option>enterprise</option></select>
@@ -214,28 +214,28 @@
   </div>
 
   <div class="panel glass">
-    <h2>Connected sites <span id="mgmtHint">admin can re-tier, ban, unban, remove — live</span></h2>
-    <div class="tenants" id="tenants"><div class="empty">No sites connected yet. Add one above; anonymous visitors appear here too once traffic flows.</div></div>
+    <h2>Connected sites <span id="mgmtHint"></span></h2>
+    <div class="tenants" id="tenants"><div class="empty">No sites yet</div></div>
   </div>
 
   <div class="grid">
     <div class="panel glass">
-      <h2>Decision feed <span>pushed over SSE, newest first</span></h2>
-      <div class="feed" id="feed"><div class="empty">Waiting for requests…</div></div>
+      <h2>Decision feed</h2>
+      <div class="feed" id="feed"><div class="empty">Waiting…</div></div>
     </div>
     <div class="panel glass">
-      <h2>Autopilot <span>automations + AI notes, live</span></h2>
-      <div class="acts" id="acts"><div class="empty">Nothing has needed doing yet.</div></div>
+      <h2>Autopilot</h2>
+      <div class="acts" id="acts"><div class="empty">Quiet</div></div>
     </div>
   </div>
 
   <div class="panel glass" id="trafficPanel">
-    <h2>Generate traffic <span>hit the real endpoints of this gateway</span></h2>
+    <h2>Generate traffic</h2>
     <div class="controls">
-      <button class="btn" onclick="hit(null,'/v1/demo/ping')">Anonymous ping<small>no key → anon free tier by IP · 1 unit</small></button>
-      <button class="btn" onclick="scan(null)">Anonymous heavy scan<small>5 units</small></button>
-      <button class="btn storm" onclick="storm()">Simulate retry-storm<small>12 rapid calls → autopilot bans</small></button>
-      <label class="toggle neo"><input type="checkbox" id="autoT"> auto anon traffic</label>
+      <button class="btn" onclick="hit(null,'/v1/demo/ping')">Ping<small>1 unit</small></button>
+      <button class="btn" onclick="scan(null)">Heavy scan<small>5 units</small></button>
+      <button class="btn storm" onclick="storm()">Retry-storm<small>triggers auto-ban</small></button>
+      <label class="toggle neo"><input type="checkbox" id="autoT"> auto traffic</label>
     </div>
   </div>
 
@@ -266,7 +266,7 @@
     $("keybox").style.display = "flex";
     $("adminKey").value = adminKey;
     $("trafficPanel").style.display = "none";
-    $("mgmtHint").textContent = "read-only in proxy mode";
+    $("mgmtHint").textContent = "read-only";
   } else if (!token) {
     $("login").classList.remove("gone");
   }
@@ -489,7 +489,7 @@
     const box = $("snippet"); box.style.display = "block";
     if (!r.ok){ $("snipLbl").textContent = `could not connect: ${data.error}`; $("snipCode").textContent = ""; return; }
     snipText = data.beacon.replace("http://localhost:3000", location.origin); // snippet points at THIS gateway
-    $("snipLbl").textContent = `${data.site} connected on the ${data.tier} tier. API key: ${data.apiKey} — paste this into the site's pages (or its shared JS file):`;
+    $("snipLbl").textContent = `${data.site} · ${data.tier} · key ${data.apiKey} · paste into the site:`;
     $("snipCode").textContent = snipText;
     $("siteName").value = "";
   }
