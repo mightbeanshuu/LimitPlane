@@ -1,3 +1,4 @@
 .claude/settings.local.json
 .firecrawl/
 node_modules/
+site/.vercel/

@@ -1066,3 +1066,12 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Dependencies changed: none (zero new deps; demo server is plain node:http)
 - Learner stuck point: None
 - Revisit later: Session 12 dynamic config reload; Session 23 Policy Copilot Helper 2 can now plug into the audit events.
+
+## 2026-07-28 - Attach-Anywhere: Proxy CLI + Landing Site
+- Command: `node --check bin/limitplane.js`; end-to-end proxy test vs a dummy foreign site; `vercel deploy --prod` (project limitplane, scope anshu-s-projects6)
+- Reason: Make LimitPlane attachable to ANY site (not just Node) in a few steps: zero-dep reverse-proxy CLI (bin/limitplane.js + limitplane.config.example.json + package.json "bin"), plus a landing/docs site (site/index.html) with both attach paths.
+- Result: Success; proxy verified (2x200 then 429 through to dummy upstream, blocked requests never reach it, admin audit route gated by x-limitplane-admin, 404 without key); site LIVE at https://limitplane.vercel.app (logo + copy-button tabs for proxy vs middleware install).
+- Files changed: bin/limitplane.js (new), limitplane.config.example.json (new), site/index.html + site/logo.svg (new), package.json (bin field), README.md (attach-anywhere section + site link), .gitignore (site/.vercel)
+- Dependencies changed: none (proxy is plain node:http/https)
+- Learner stuck point: None
+- Revisit later: Session 12 dynamic config reload would let the proxy pick up policy edits without restart - natural next step.

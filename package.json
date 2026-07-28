@@ -4,6 +4,9 @@
   "type": "module",
   "main": "src/index.js",
   "exports": "./src/index.js",
+  "bin": {
+    "limitplane": "bin/limitplane.js"
+  },
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test tests/unit/**/*.test.js",

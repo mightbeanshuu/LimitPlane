@@ -1,0 +1,64 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+
+    <!-- Glowing Plane Gradient -->
+    <linearGradient id="planeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+
+    <!-- Upward Request Arrows Gradient (Allowed) -->
+    <linearGradient id="arrowAllowed" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#2dd4bf" />
+    </linearGradient>
+
+    <!-- Upward Request Arrows Gradient (Blocked/Limited) -->
+    <linearGradient id="arrowBlocked" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#f43f5e" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#f43f5e" />
+    </linearGradient>
+
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Canvas Background -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGradient)" />
+
+  <!-- The Limit Plane (Shield / Barrier) -->
+  <path d="M 120 190 L 392 190" stroke="url(#planeGradient)" stroke-width="24" stroke-linecap="round" filter="url(#glow)" />
+  
+  <!-- Sub-plane glowing track -->
+  <path d="M 160 210 L 352 210" stroke="#6366f1" stroke-width="6" stroke-linecap="round" opacity="0.5" />
+
+  <!-- Request 1: Blocked (Hitting the limit plane) -->
+  <path d="M 256 360 L 256 240" stroke="url(#arrowBlocked)" stroke-width="28" stroke-linecap="round" />
+  <!-- Red arrow head splashing on the limit -->
+  <polygon points="256,195 224,245 288,245" fill="#f43f5e" />
+  <!-- Splatter / Bounce off -->
+  <circle cx="210" cy="225" r="8" fill="#f43f5e" opacity="0.8" />
+  <circle cx="302" cy="225" r="8" fill="#f43f5e" opacity="0.8" />
+  <circle cx="180" cy="255" r="6" fill="#f43f5e" opacity="0.5" />
+  <circle cx="332" cy="255" r="6" fill="#f43f5e" opacity="0.5" />
+
+  <!-- Request 2: Allowed (Passing under the limit / alongside) -->
+  <!-- Since it's a plane, maybe we show requests passing through holes or smaller requests passing? -->
+  <!-- Let's show green requests that have passed successfully earlier or routing around -->
+  <path d="M 150 360 L 150 280" stroke="url(#arrowAllowed)" stroke-width="16" stroke-linecap="round" />
+  <polygon points="150,260 134,288 166,288" fill="#2dd4bf" />
+
+  <path d="M 362 360 L 362 250" stroke="url(#arrowAllowed)" stroke-width="16" stroke-linecap="round" />
+  <polygon points="362,230 346,258 378,258" fill="#2dd4bf" />
+
+  <!-- Text -->
+  <text x="256" y="445" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-weight="900" font-size="44" fill="#ffffff" text-anchor="middle" letter-spacing="4">LIMIT<tspan fill="#38bdf8">PLANE</tspan></text>
+</svg>

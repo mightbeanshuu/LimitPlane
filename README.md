@@ -1,6 +1,8 @@
 # LimitPlane
 
-**An AI-aware rate-limiting layer you drop in front of any Node site.**
+**An AI-aware rate-limiting layer you drop in front of any site.**
+
+Site: **https://limitplane.vercel.app**
 
 Modern APIs have a new problem: not all requests cost the same. A health-check
 ping costs microseconds; an AI inference call (an NSFW image/text scan, a GenAI
@@ -23,7 +25,31 @@ cost class** and budgets them per **tenant + tier + route**.
             └─────────────────────────────────────────────┘
 ```
 
-## Add it to your site (the whole install)
+## Attach to ANY site (proxy mode — no code changes)
+
+Your site can be Python, PHP, Rails, static files, anything. LimitPlane runs
+as a tiny gateway in front of it; blocked requests never reach your servers.
+
+```bash
+# 1. get it
+git clone https://github.com/mightbeanshuu/LimitPlane && cd LimitPlane
+
+# 2. describe your limits (point "upstream" at your existing site)
+cp limitplane.config.example.json limitplane.config.json
+
+# 3. start the layer, send traffic to it instead of your site
+node bin/limitplane.js --config limitplane.config.json
+# LimitPlane proxy on http://localhost:3000 → protecting http://localhost:8080
+```
+
+With `adminKey` set in the config, `GET /_limitplane/audit` (header
+`x-limitplane-admin`) shows the last 50 allow/block decisions.
+
+## Add it to a Node site (middleware mode — the whole install)
+
+```bash
+npm install github:mightbeanshuu/LimitPlane
+```
 
 ```js
 import { createLimitPlane } from "limitplane";
