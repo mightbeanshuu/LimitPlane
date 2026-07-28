@@ -339,6 +339,22 @@ const server = http.createServer(async (req, res) => {
     res.setHeader("Content-Type", "image/svg+xml");
     return res.end(logoSvg);
   }
+  // Create an account (JWT). New users get their own org so they land
+  // somewhere they can manage, then a session token — same as login returns.
+  if (route === "/v1/auth/signup" && req.method === "POST") {
+    const body = parseJson(await readRawBody(req));
+    const email = String(body.email ?? "").trim().toLowerCase();
+    const password = String(body.password ?? "");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return sendJson(res, 400, { error: "invalid_email" });
+    if (password.length < 6) return sendJson(res, 400, { error: "weak_password", message: "6+ characters." });
+    if (orgStore.data.users[email] || email.endsWith("@limitplane.dev")) return sendJson(res, 409, { error: "email_taken" });
+    orgStore.createUser(email, password);
+    orgStore.createOrg(`${email.split("@")[0]}'s org`, email); // a home to manage
+    const token = sign({ sub: email, role: "user" }, JWT_SECRET);
+    const orgs = orgStore.orgsFor(email).map((o) => ({ id: o.id, name: o.name, role: o.members[email] }));
+    return sendJson(res, 201, { token, role: "user", expiresInSec: 7200, orgs });
+  }
+
   if (route === "/v1/auth/login" && req.method === "POST") {
     const body = parseJson(await readRawBody(req));
     // Platform staff first (demo admin/viewer), then org members from the directory.

@@ -131,6 +131,8 @@
   .btn.storm{color:var(--rose)} .btn.up{color:var(--sky)}
   .toggle{display:flex;align-items:center;gap:9px;font:12px var(--mono);color:var(--dim);cursor:pointer;padding:10px 14px}
   .empty{color:var(--faint);font:12px var(--mono);padding:14px}
+  .clearbtn{margin-left:auto;border:none;cursor:pointer;font:600 10px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--faint);background:var(--inner);padding:5px 11px;border-radius:8px}
+  .clearbtn:hover{color:var(--rose)}
   .addsite{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   .addsite input,.addsite select{border:none;font:13px var(--mono);color:var(--ink);padding:12px 14px;border-radius:12px;background:var(--bg);outline:none;
     box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
@@ -202,21 +204,24 @@
 <!-- ============ LOGIN (JWT; hidden in proxy mode) ============ -->
 <div id="login" class="gone">
   <div class="logincard glass">
-    <img src="logo.svg" onerror="this.style.display='none'" alt="">
+    <a href="https://limitplane.vercel.app/"><img src="logo.svg" onerror="this.style.display='none'" alt=""></a>
     <h1>LIMIT<span style="color:var(--sky)">PLANE</span></h1>
-    <p>Sign in</p>
+    <p id="lTitle">Sign in to view the dashboard</p>
     <input class="field" id="lEmail" type="email" placeholder="email" autocomplete="username">
     <input class="field" id="lPass" type="password" placeholder="password" autocomplete="current-password">
-    <button class="loginbtn" onclick="doLogin()">Log in</button>
+    <button class="loginbtn" id="lBtn" onclick="doAuth()">Log in</button>
     <div class="lerr" id="lErr"></div>
-    <div class="hint">admin: demo@limitplane.dev · demo123<br>viewer (read-only): viewer@limitplane.dev · viewer123</div>
+    <div class="hint" style="margin-top:16px">
+      <span id="lSwitch" style="cursor:pointer;color:var(--sky)" onclick="toggleAuthMode()">New here? Create an account</span>
+    </div>
+    <div class="hint" style="margin-top:14px;opacity:.75">demo admin: demo@limitplane.dev · demo123</div>
   </div>
 </div>
 
 <div class="wrap">
 
   <header>
-    <div class="brand"><img src="logo.svg" onerror="this.style.display='none'" alt="LimitPlane logo">LIMIT<span class="p">PLANE</span>&nbsp;<span style="font-weight:400;color:var(--dim);font-size:14px">/ live dashboard</span></div>
+    <a class="brand" href="https://limitplane.vercel.app/" title="back to homepage" style="text-decoration:none;color:inherit"><img src="logo.svg" onerror="this.style.display='none'" alt="LimitPlane logo">LIMIT<span class="p">PLANE</span>&nbsp;<span style="font-weight:400;color:var(--dim);font-size:14px">/ live dashboard</span></a>
     <div class="hright">
       <div class="statusbar glass" id="statusbar"><span class="ping"><i></i></span><span id="liveTxt">connecting…</span><span class="sep"></span><span class="transport" id="transport">boot</span></div>
       <button class="iconbtn" id="themeBtn" title="toggle theme">◐</button>
@@ -272,7 +277,7 @@
 
   <div class="grid">
     <div class="panel glass">
-      <h2>Decision feed</h2>
+      <h2>Decision feed <button class="clearbtn" onclick="clearFeed()">clear</button></h2>
       <div class="feed" id="feed"><div class="empty">Waiting…</div></div>
     </div>
     <div class="panel glass">
@@ -328,32 +333,52 @@
   let role = localStorage.getItem("lp_role") ?? "";
   let adminKey = localStorage.getItem("lp_admin_key") ?? "";
 
+  const appBody = document.querySelector(".wrap");
   if (PROXY) {
     $("keybox").style.display = "flex";
     $("adminKey").value = adminKey;
     $("trafficPanel").style.display = "none";
     $("mgmtHint").textContent = "read-only";
   } else if (!token) {
+    // No login = no dashboard. Guests see only the sign-in / create-account card.
     $("login").classList.remove("gone");
+    appBody.style.filter = "blur(6px)";
+    appBody.style.pointerEvents = "none";
   }
   function saveKey(){ adminKey = $("adminKey").value.trim(); localStorage.setItem("lp_admin_key", adminKey); tick(); }
 
   // ---------- JWT auth ----------
-  async function doLogin(){
-    const r = await fetch(GW + "/v1/auth/login", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: $("lEmail").value.trim(), password: $("lPass").value }) });
-    if (!r.ok){ $("lErr").textContent = "wrong credentials · demo logins are below"; return; }
-    const session = await r.json();
-    token = session.token; role = session.role;
-    localStorage.setItem("lp_token", token); localStorage.setItem("lp_role", role);
-    localStorage.setItem("lp_user", $("lEmail").value.trim());
+  let authMode = "login"; // or "signup"
+  function toggleAuthMode(){
+    authMode = authMode === "login" ? "signup" : "login";
+    $("lTitle").textContent = authMode === "login" ? "Sign in to view the dashboard" : "Create your account";
+    $("lBtn").textContent = authMode === "login" ? "Log in" : "Create account";
+    $("lSwitch").textContent = authMode === "login" ? "New here? Create an account" : "Have an account? Sign in";
+    $("lErr").textContent = "";
+  }
+  async function doAuth(){
+    const email = $("lEmail").value.trim(), password = $("lPass").value;
+    if (!email || !password){ $("lErr").textContent = "email and password required"; return; }
+    const path = authMode === "signup" ? "/v1/auth/signup" : "/v1/auth/login";
+    const r = await fetch(GW + path, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }) });
+    const data = await r.json();
+    if (!r.ok){
+      $("lErr").textContent = { email_taken: "that email is taken", weak_password: "password needs 6+ characters",
+        invalid_email: "enter a valid email", bad_credentials: "wrong email or password" }[data.error] ?? "could not " + authMode;
+      return;
+    }
+    token = data.token; role = data.role;
+    localStorage.setItem("lp_token", token); localStorage.setItem("lp_role", role); localStorage.setItem("lp_user", email);
     $("login").classList.add("gone");
+    const wrapEl = document.querySelector(".wrap"); wrapEl.style.filter = ""; wrapEl.style.pointerEvents = "";
     enterUi(); connectLive(); tick();
   }
   function doLogout(){
     ["lp_token","lp_role","lp_user"].forEach(k => localStorage.removeItem(k));
     location.reload();
   }
+  function clearFeed(){ feedRows.length = 0; $("feed").innerHTML = '<div class="empty">Cleared</div>'; }
   function enterUi(){
     if (PROXY) return;
     $("userchip").style.display = "flex";
@@ -363,7 +388,7 @@
     const rc = $("rolechip"); rc.textContent = role; rc.className = "role " + role;
     if (role === "admin") $("addPanel").style.display = "block"; // viewers watch
   }
-  $("lPass")?.addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+  $("lPass")?.addEventListener("keydown", e => { if (e.key === "Enter") doAuth(); });
 
   const HDRS = () => PROXY ? { "x-limitplane-admin": adminKey } : { authorization: "Bearer " + token };
   async function fetchJson(path){
