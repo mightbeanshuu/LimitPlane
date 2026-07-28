@@ -131,8 +131,10 @@
   .pipe3d{height:200px;border-radius:16px;overflow:hidden;background:var(--panel);border:1px solid var(--line)}
   .stagerow{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:14px}
   @media(max-width:760px){.stagerow{grid-template-columns:1fr 1fr}}
-  .stage{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 15px;font:12px var(--mono);color:var(--dim)}
-  .stage b{display:block;font-family:var(--display);color:var(--text);font-size:13px;margin-bottom:5px;letter-spacing:.02em}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:13px;line-height:1.5;color:var(--dim)}
+  .stage b{display:block;font-family:var(--display);color:var(--text);font-size:14px;margin-bottom:6px;letter-spacing:.01em}
+  .pipehint{display:flex;justify-content:space-between;align-items:center;max-width:100%;font:11px var(--mono);color:var(--faint);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px;padding:0 6px}
+  .pipehint span:nth-child(2){color:var(--sky);font-size:14px}
   .billflow{display:flex;flex-direction:column;gap:6px;max-width:560px}
   .bstep{display:flex;gap:14px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px 18px}
   .bstep .bn{width:30px;height:30px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 14px var(--mono);color:var(--sky);border:1px solid rgba(56,189,248,.4);background:rgba(56,189,248,.08)}
@@ -259,26 +261,27 @@ if (!d.allowed) return;            // 429 already sent</pre><button class="copy"
 <section id="how" class="alt">
   <div class="wrap">
     <div class="kicker">How it works</div>
-    <h2>Two meters per request, one automated billing loop</h2>
-    <p class="lede">Every request answers two questions in order: does your plan have units left this month, and are you going too fast right now? Every verdict lands in an audit log with the facts.</p>
-    <!-- 3D pipeline: a request particle flows through the five stages -->
+    <h2>Every request passes five quick checks</h2>
+    <p class="lede">A request only gets through if every check says yes. If one says no, it's stopped with a plain reason — and every decision is written down.</p>
+    <!-- 3D pipeline: a request flows left to right through the five checks -->
+    <div class="pipehint"><span>request comes in</span><span>→</span><span>answer goes out</span></div>
     <div class="pipe3d" id="pipe3d"></div>
     <div class="stagerow">
-      <div class="stage"><b>1 · Who</b>api key → tenant + tier</div>
-      <div class="stage"><b>2 · What</b>route → <span style="color:var(--teal)">light 1</span> · <span style="color:var(--sky)">std 2</span> · <span style="color:var(--rose)">heavy 5</span></div>
-      <div class="stage"><b>3 · Plan</b>monthly meter, resets on the 1st</div>
-      <div class="stage"><b>4 · Burst</b>token bucket per tenant·tier·route</div>
-      <div class="stage"><b>5 · Verdict</b>pass, or 429 that says why</div>
+      <div class="stage"><b>1 · Who</b>Which customer is this?</div>
+      <div class="stage"><b>2 · How costly</b>A cheap read, normal work, or an expensive AI call?</div>
+      <div class="stage"><b>3 · Monthly plan</b>Do they have requests left this month?</div>
+      <div class="stage"><b>4 · Speed</b>Are they sending too fast right now?</div>
+      <div class="stage"><b>5 · Answer</b>Let it through, or stop it with a clear reason.</div>
     </div>
 
-    <h2 style="margin-top:56px">Billing runs itself</h2>
-    <p class="lede">A payment flips the customer's tier in the live policy — no restart, no human. Cancellations and failed payments flow back the same way.</p>
+    <h2 style="margin-top:56px">Upgrades happen on their own</h2>
+    <p class="lede">When a customer pays, their new plan takes effect immediately — no one has to do anything. If they cancel or a payment fails, they move back down the same way.</p>
     <div class="billflow">
-      <div class="bstep"><span class="bn">1</span><div><b>Customer clicks upgrade</b><small>Stripe Checkout, hosted — we never see cards</small></div></div>
+      <div class="bstep"><span class="bn">1</span><div><b>The customer pays</b><small>through Stripe's secure page — we never see card details</small></div></div>
       <div class="barrow">↓</div>
-      <div class="bstep"><span class="bn">2</span><div><b>Stripe signs &amp; POSTs the webhook</b><small>HMAC signature verified before a byte is trusted</small></div></div>
+      <div class="bstep"><span class="bn">2</span><div><b>Stripe confirms the payment to us</b><small>with a signed message we verify before trusting it</small></div></div>
       <div class="barrow">↓</div>
-      <div class="bstep"><span class="bn">3</span><div><b>Tier flips in the tenant store</b><small>the very next request is limited under the new plan</small></div></div>
+      <div class="bstep"><span class="bn">3</span><div><b>The new plan is live instantly</b><small>the customer's very next request uses their upgraded limits</small></div></div>
     </div>
   </div>
 </section>
@@ -311,7 +314,7 @@ if (!d.allowed) return;            // 429 already sent</pre><button class="copy"
         <a class="btn btn-sec" href="https://github.com/mightbeanshuu/LimitPlane#billing">Talk to us</a>
       </div>
     </div>
-    <p class="fineprint">Demo plans for the reference deployment. Billing is powered by Stripe Checkout + signed webhooks; a payment flips the customer's tier in the live policy instantly, with no restart. Try it locally with <code>POST /v1/billing/simulate</code>.</p>
+    <p class="fineprint">Example plans for the live demo. Payments run through Stripe, and an upgrade takes effect on the customer's very next request.</p>
   </div>
 </section>
 
@@ -434,42 +437,71 @@ if (!d.allowed) return;            // 429 already sent</pre><button class="copy"
   import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
   const el = document.getElementById("pipe3d");
   if (el){
+    const light = () => document.documentElement.dataset.theme === "light";
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
     renderer.setPixelRatio(Math.min(devicePixelRatio,2));
     renderer.setSize(el.clientWidth, el.clientHeight);
     el.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
-    const cam = new THREE.PerspectiveCamera(50, el.clientWidth/el.clientHeight, .1, 100);
-    cam.position.set(0, 2.4, 13);
+    const cam = new THREE.PerspectiveCamera(46, el.clientWidth/el.clientHeight, .1, 100);
+    cam.position.set(0, 1.6, 15);
     cam.lookAt(0, 0, 0);
-    // five gate rings the request passes through
+
+    const SPAN = 18, X0 = -SPAN/2, GAP = SPAN/4; // 5 rings evenly across
     const COLORS = [0x94a3b8, 0x2dd4bf, 0x38bdf8, 0x818cf8, 0xf43f5e];
+
+    // a soft connecting beam so the eye follows the flow
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, SPAN, 8),
+      new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent:true, opacity:.18 }));
+    beam.rotation.z = Math.PI/2; scene.add(beam);
+
     const gates = [];
     for (let i=0;i<5;i++){
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(1.5, .08, 12, 40),
-        new THREE.MeshBasicMaterial({ color: COLORS[i], transparent:true, opacity:.7 }));
-      ring.position.x = -8 + i*4;
-      ring.rotation.y = Math.PI/2;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(1.7, .11, 14, 44),
+        new THREE.MeshBasicMaterial({ color: COLORS[i], transparent:true, opacity:.85 }));
+      ring.position.x = X0 + i*GAP; ring.rotation.y = Math.PI/2;
       scene.add(ring); gates.push(ring);
     }
-    // the request particles streaming left to right through the gates
-    const N = 90, pos = new Float32Array(N*3), spd = new Float32Array(N), col = new Float32Array(N*3);
+
+    // request particles: flow left->right; ~15% get "blocked" and fade at a gate
+    const N = 120, pos = new Float32Array(N*3), spd = new Float32Array(N), col = new Float32Array(N*3), blockAt = new Float32Array(N);
     const OK = new THREE.Color(0x2dd4bf), BLOCK = new THREE.Color(0xf43f5e);
-    function seed(i){ pos[i*3] = -9 - Math.random()*4; pos[i*3+1] = (Math.random()-.5)*2; pos[i*3+2] = (Math.random()-.5)*2; spd[i] = .04 + Math.random()*.05; (Math.random()<.15?BLOCK:OK).toArray(col, i*3); }
-    for (let i=0;i<N;i++) seed(i);
+    function seed(i){
+      pos[i*3] = X0 - 1 - Math.random()*4;
+      pos[i*3+1] = (Math.random()-.5)*2.4;
+      pos[i*3+2] = (Math.random()-.5)*2.4;
+      spd[i] = .05 + Math.random()*.06;
+      const blocked = Math.random() < .15;
+      blockAt[i] = blocked ? X0 + (1+Math.floor(Math.random()*4))*GAP : 999; // stop at some gate
+      (blocked?BLOCK:OK).toArray(col, i*3);
+    }
+    for (let i=0;i<N;i++){ seed(i); pos[i*3] = X0 - 1 + Math.random()*SPAN; } // pre-fill
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(pos,3));
     geo.setAttribute("color", new THREE.BufferAttribute(col,3));
-    scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ size:.18, vertexColors:true, transparent:true, opacity:.9 })));
+    const mat = new THREE.PointsMaterial({ size:.22, vertexColors:true, transparent:true, opacity:.95 });
+    scene.add(new THREE.Points(geo, mat));
+
+    function applyTheme(){ mat.opacity = light() ? .8 : .95; beam.material.opacity = light() ? .12 : .18; }
+    applyTheme();
+    new MutationObserver(applyTheme).observe(document.documentElement, { attributes:true, attributeFilter:["data-theme"] });
+
     let t=0;
     (function loop(){ requestAnimationFrame(loop); t+=.01;
-      for (let i=0;i<N;i++){ pos[i*3]+=spd[i]; if (pos[i*3]>9){ seed(i); } }
+      for (let i=0;i<N;i++){
+        pos[i*3] += spd[i];
+        if (pos[i*3] >= blockAt[i]){ // hit its block gate -> bounce back a touch then respawn
+          pos[i*3] = blockAt[i]; pos[i*3+1] += (Math.random()-.5)*.15;
+          if (Math.random() < .04) seed(i);
+        }
+        if (pos[i*3] > X0 + SPAN + 1) seed(i);
+      }
       geo.attributes.position.needsUpdate = true;
-      gates.forEach((g,i)=>{ g.rotation.z = t*(1+i*.2); const sc = 1 + Math.sin(t*2+i)*.05; g.scale.set(sc,sc,sc); });
+      gates.forEach((g,i)=>{ g.rotation.z = t*(0.6+i*.12); const sc = 1 + Math.sin(t*2+i)*.04; g.scale.set(sc,sc,sc); });
       renderer.render(scene, cam);
     })();
     addEventListener("resize", ()=>{ renderer.setSize(el.clientWidth, el.clientHeight); cam.aspect = el.clientWidth/el.clientHeight; cam.updateProjectionMatrix(); });
   }
-</script>
+</script></script>
 </body>
 </html>
