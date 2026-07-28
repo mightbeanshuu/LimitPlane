@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LimitPlane · Live Dashboard</title>
 <meta name="description" content="Live control room: real traffic, visitor heatmap + 3D globe, behavioral fingerprints, active autopilot, AI ops chat.">
-<link rel="icon" href="logo.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -581,15 +581,15 @@
 
   // ---------- visitor map (Leaflet + CARTO tiles, theme-aware) ----------
   if (GW) $("admLink").href = GW + "/admin";
-  // one world, no infinite repeat (the tiled artifact): noWrap + world bounds.
-  const WORLD = L.latLngBounds([-60, -170], [78, 190]);
-  const lmap = L.map("map", { zoomControl: false, attributionControl: false, worldCopyJump: false,
-    maxBounds: WORLD, maxBoundsViscosity: 1, minZoom: 1.4 }).setView([20, 15], 1.6);
-  let tiles = null;
+  // one world, no infinite repeat (noWrap), but bounds loose enough that the
+  // map never force-zooms into a strip. We center on where traffic actually is.
+  const lmap = L.map("map", { zoomControl: true, attributionControl: false, worldCopyJump: false, minZoom: 1, maxZoom: 12 }).setView([20, 0], 1.5);
+  lmap.setMaxBounds([[-85, -180], [85, 180]]);
+  let tiles = null, hasFit = false;
   function setTiles(){
     if (tiles) lmap.removeLayer(tiles);
     const dark = rootEl.dataset.theme === "dark";
-    tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, { maxZoom: 18, noWrap: true, bounds: WORLD }).addTo(lmap);
+    tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, { maxZoom: 18, noWrap: true }).addTo(lmap);
   }
   setTiles();
   const markers = L.layerGroup().addTo(lmap);
@@ -630,6 +630,14 @@
     }
     const local = vs.filter(v => v.geo === "local").length;
     $("visMeta").textContent = `${vs.length} unique · ${located} located${local ? ` · ${local} local` : ""}`;
+    // frame the map on the real traffic the first time we have any (don't
+    // yank it afterwards — the operator may have panned).
+    if (!hasFit && located > 0){
+      const pts = vs.filter(v => typeof v.lat === "number").map(v => [v.lat, v.lon]);
+      if (pts.length === 1) lmap.setView(pts[0], 4);
+      else lmap.fitBounds(pts, { padding: [40, 40], maxZoom: 6 });
+      hasFit = true;
+    }
   }
 
   // ---------- 3D globe: visitors as glowing pins on a rotating sphere ----------

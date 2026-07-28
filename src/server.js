@@ -74,6 +74,11 @@ const automations = createAutomations({
 });
 const stats = createStats(); // live counters for the dashboard
 
+// Per-IP fingerprints: the tenant classifier keys by site; the visitor MAP
+// needs behavior keyed by the actual IP (one person, one machine, one dot).
+// Kept separate so a shared site's traffic doesn't blur a single visitor.
+const ipFingerprints = createFingerprints();
+
 // ---- Behavioral fingerprinting -------------------------------------------------
 // Classifies each client (human / ai_agent / crawler / retry_bug) from the
 // timing + path signatures we already record, and hands the limiter an
@@ -166,6 +171,7 @@ const lp = createLimitPlane({
   onDecision: (e) => {
     stats.onDecision(e);
     trackVisitor(e.ip, e.ua); // the map learns about every client + its device/OS
+    if (e.ip) ipFingerprints.observe({ tenantId: e.ip, at: e.at, route: e.route, allowed: e.allowed }); // per-IP behavior
     if (!e.allowed) {
       memory.remember(
         `${when(e.at)} ${e.tenantId} blocked on ${e.route}: ${e.reason} (tier ${e.tier}, cost ${e.cost}${e.monthlyUsed !== undefined ? `, monthly ${e.monthlyUsed} used` : ""}${e.ip ? `, ip ${e.ip}` : ""})`,
@@ -329,7 +335,7 @@ const server = http.createServer(async (req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.end(adminHtml);
   }
-  if (route === "/logo.svg") {
+  if (route === "/logo.svg" || route === "/favicon.svg") {
     res.setHeader("Content-Type", "image/svg+xml");
     return res.end(logoSvg);
   }
@@ -355,12 +361,9 @@ const server = http.createServer(async (req, res) => {
       snap.tenants = snap.tenants.filter((t) => visible.has(t.tenantId));
     }
     snap.tenants = snap.tenants.map((t) => ({ ...t, org: orgStore.orgOf(t.tenantId)?.name ?? null, fingerprint: fingerprints.get(t.tenantId)?.label ?? null }));
-    // A visitor's behavior lives under whichever tenant their traffic hit:
-    // anonymous clients are keyed anon:<ip>, keyed clients under their site.
-    snap.visitors = [...visitors.values()].map((v) => ({
-      ...v,
-      label: (fingerprints.get(`anon:${v.ip}`) ?? fingerprints.get(v.ip))?.label ?? null,
-    }));
+    // A visitor's behavior is classified per-IP, so it's correct whether they
+    // hit a named site or anonymous routes.
+    snap.visitors = [...visitors.values()].map((v) => ({ ...v, label: ipFingerprints.get(v.ip)?.label ?? null }));
     snap.uniqueVisitors = visitors.size;
     return sendJson(res, 200, snap);
   }
