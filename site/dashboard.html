@@ -4,11 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LimitPlane · Live Dashboard</title>
-<meta name="description" content="Live control room for the LimitPlane gateway: real traffic, visitor map, autopilot, AI ops chat.">
+<meta name="description" content="Live control room for the LimitPlane gateway: real traffic, visitor heatmap, behavioral fingerprints, autopilot, AI ops chat.">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <style>
   :root{
     --bg:#eef2f8; --ink:#1c2940; --dim:#5d6b84; --faint:#93a0b6;
@@ -148,6 +149,18 @@
   #map{height:300px;border-radius:14px;overflow:hidden}
   .leaflet-container{background:transparent;font:11px var(--mono)}
   .ipchip{font-size:10px;color:var(--faint);background:var(--inner);padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .bchip{font-size:9px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .bchip.human{background:rgba(13,148,136,.16);color:var(--teal)}
+  .bchip.ai_agent{background:rgba(2,132,199,.16);color:var(--sky)}
+  .bchip.crawler{background:rgba(217,119,6,.16);color:var(--amber)}
+  .bchip.retry_bug{background:rgba(225,29,72,.16);color:var(--rose)}
+  .bchip.warming{background:rgba(120,130,150,.16);color:var(--faint)}
+  .maptools{display:flex;gap:6px;align-items:center}
+  .maptools button{border:none;cursor:pointer;font:10px var(--mono);padding:5px 10px;border-radius:8px;background:var(--inner);color:var(--dim)}
+  .maptools button.on{color:var(--ink);box-shadow:inset 0 0 0 1px var(--glass-edge)}
+  .maplegend{display:flex;gap:12px;margin-top:8px;font:10px var(--mono);color:var(--faint);flex-wrap:wrap}
+  .maplegend span{display:flex;align-items:center;gap:5px}
+  .maplegend i{width:8px;height:8px;border-radius:50%;display:inline-block}
   .chatfab{position:fixed;right:22px;bottom:22px;z-index:55;width:52px;height:52px;border:none;border-radius:50%;cursor:pointer;font-size:20px;color:#fff;background:linear-gradient(135deg,var(--sky),var(--teal));box-shadow:0 10px 26px rgba(2,132,199,.35)}
   .chatbox{position:fixed;right:22px;bottom:84px;z-index:55;width:min(360px,calc(100vw - 44px));display:none;flex-direction:column;overflow:hidden}
   .chatbox.open{display:flex}
@@ -226,8 +239,9 @@
   </div>
 
   <div class="panel glass">
-    <h2>Visitor map <span id="visMeta"></span></h2>
+    <h2>Visitor map <span class="maptools"><button id="heatBtn" class="on" onclick="setMapMode('heat')">heatmap</button><button id="ptBtn" onclick="setMapMode('points')">points</button><span id="visMeta"></span></span></h2>
     <div id="map" class="neo-in"></div>
+    <div class="maplegend"><span><i style="background:#2dd4bf"></i>human</span><span><i style="background:#38bdf8"></i>AI agent</span><span><i style="background:#fbbf24"></i>crawler</span><span><i style="background:#fb7185"></i>retry-bug</span></div>
   </div>
 
   <div class="panel glass" id="addPanel" style="display:none">
@@ -377,6 +391,7 @@
           </div>
           <div class="meter neo-in"><i class="${pct > .8 ? "hot" : ""}" style="transform:scaleX(${q ? pct.toFixed(3) : 0})"></i></div>
           <div class="sub"><span>${q ? `${fmt(q.used)} / ${fmt(q.quota)} units` : "no monthly plan"}</span><span>${fmt(t.allowed)} ok · ${fmt(t.blocked)} blocked</span></div>
+      ${t.fingerprint ? `<div style="margin-top:7px"><span class="bchip ${t.fingerprint}">${t.fingerprint.replace("_"," ")}</span></div>` : ""}
           ${canManage ? `<div class="mgmt">
             ${t.bannedMs > 0
               ? `<button class="unbanb" onclick="mgmt('unban','${t.tenantId}')">unban now</button>`
@@ -393,7 +408,7 @@
   function paintFeed(){ if (feedRows.length) $("feed").innerHTML = feedRows.slice(0, 14).map(e => `
       <div class="row ${e.allowed ? "ok" : "no"}">
         <span class="st">${e.allowed ? "200" : "429"}</span><span class="rt">${e.route}</span>
-        <span class="who">${e.tenantId}</span>${e.ip ? `<span class="ipchip">${e.ip}</span>` : ""}<span class="why">${e.allowed ? e.costClass : (e.reason ?? "")}</span>
+        <span class="who">${e.tenantId}</span>${e.ip ? `<span class="ipchip">${e.ip}</span>` : ""}${e.label ? `<span class="bchip ${e.label}">${e.label.replace("_"," ")}</span>` : ""}<span class="why">${e.allowed ? e.costClass : (e.reason ?? "")}</span>
       </div>`).join(""); }
   function paintActs(){ if (actRows.length) $("acts").innerHTML = actRows.slice(0, 8).map(a => `
       <div class="act">
@@ -556,25 +571,48 @@
 
   // ---------- visitor map (Leaflet + CARTO tiles, theme-aware) ----------
   if (GW) $("admLink").href = GW + "/admin";
-  const lmap = L.map("map", { zoomControl: false, attributionControl: false }).setView([22, 10], 2);
+  // one world, no infinite repeat (the tiled artifact): noWrap + world bounds.
+  const WORLD = L.latLngBounds([-60, -170], [78, 190]);
+  const lmap = L.map("map", { zoomControl: false, attributionControl: false, worldCopyJump: false,
+    maxBounds: WORLD, maxBoundsViscosity: 1, minZoom: 1.4 }).setView([20, 15], 1.6);
   let tiles = null;
   function setTiles(){
     if (tiles) lmap.removeLayer(tiles);
     const dark = rootEl.dataset.theme === "dark";
-    tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, { maxZoom: 18 }).addTo(lmap);
+    tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, { maxZoom: 18, noWrap: true, bounds: WORLD }).addTo(lmap);
   }
   setTiles();
   const markers = L.layerGroup().addTo(lmap);
+  let heat = null, mapMode = "heat", lastVisitors = [];
+  const LABEL_COLOR = { human: "#2dd4bf", ai_agent: "#38bdf8", crawler: "#fbbf24", retry_bug: "#fb7185", warming: "#94a3b8" };
+  function setMapMode(m){
+    mapMode = m;
+    $("heatBtn").classList.toggle("on", m === "heat");
+    $("ptBtn").classList.toggle("on", m === "points");
+    updateMap(lastVisitors);
+  }
   function updateMap(vs){
+    lastVisitors = vs;
     markers.clearLayers();
+    if (heat){ lmap.removeLayer(heat); heat = null; }
     let located = 0;
+    const heatPts = [];
     for (const v of vs){
       if (typeof v.lat !== "number") continue;
       located++;
-      L.circleMarker([v.lat, v.lon], {
-        radius: Math.min(5 + Math.log2(v.count + 1) * 2, 16),
-        color: "#0d9488", weight: 1.5, fillColor: "#2dd4bf", fillOpacity: .45,
-      }).bindPopup(`<b>${v.ip}</b><br>${v.city ?? "?"}, ${v.country ?? "?"}<br>${v.count} requests`).addTo(markers);
+      // request count -> heat weight; IP is LOCKED to its geolocation.
+      heatPts.push([v.lat, v.lon, Math.min(0.3 + Math.log2(v.count + 1) * 0.25, 1)]);
+      if (mapMode === "points"){
+        const col = LABEL_COLOR[v.label] ?? "#2dd4bf";
+        L.circleMarker([v.lat, v.lon], {
+          radius: Math.min(5 + Math.log2(v.count + 1) * 2, 16),
+          color: col, weight: 1.5, fillColor: col, fillOpacity: .5,
+        }).bindPopup(`<b>${v.ip}</b><br>${v.city ?? "?"}, ${v.country ?? "?"}<br>${v.count} requests${v.label ? `<br>behavior: ${v.label.replace("_"," ")}` : ""}`).addTo(markers);
+      }
+    }
+    if (mapMode === "heat" && heatPts.length && L.heatLayer){
+      heat = L.heatLayer(heatPts, { radius: 26, blur: 18, maxZoom: 6,
+        gradient: { 0.2: "#0ea5e9", 0.5: "#2dd4bf", 0.8: "#fbbf24", 1: "#fb7185" } }).addTo(lmap);
     }
     const local = vs.filter(v => v.geo === "local").length;
     $("visMeta").textContent = `${vs.length} unique · ${located} located${local ? ` · ${local} local` : ""}`;

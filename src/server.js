@@ -20,6 +20,7 @@ import { createStats } from "./gateway/stats.js";
 import { createWsHub } from "./gateway/wsHub.js";
 import { createExplainer } from "./ai/aiExplainer.js";
 import { createMemory } from "./ai/memoryStore.js";
+import { createFingerprints } from "./gateway/fingerprint.js";
 import { classifyText } from "./demo/nsfwStub.js";
 import { createBilling, TenantStore, PLANS } from "./billing/stripeBilling.js";
 import { createAuth, sign } from "./auth/jwt.js";
@@ -69,6 +70,17 @@ const automations = createAutomations({
   },
 });
 const stats = createStats(); // live counters for the dashboard
+
+// ---- Behavioral fingerprinting -------------------------------------------------
+// Classifies each client (human / ai_agent / crawler / retry_bug) from the
+// timing + path signatures we already record, and hands the limiter an
+// adaptive lane. Label flips are worth remembering (RAG) and pushing (UI).
+const fingerprints = createFingerprints({
+  onLabelChange: (tenantId, next, prev) => {
+    memory.remember(`${when(Date.now())} ${tenantId} reclassified ${prev} -> ${next.label} (cv ${next.features.cv}, paths ${next.features.pathSpread}, blocked ${next.features.blockRatio})`, { kind: "fingerprint" });
+    push("fingerprint", { tenantId, label: next.label, confidence: next.confidence, features: next.features });
+  },
+});
 
 // ---- RAG incident memory -------------------------------------------------------
 // Every NOTABLE event (blocks, autopilot actions, billing, onboarding) becomes
@@ -137,6 +149,7 @@ setInterval(() => {
 const lp = createLimitPlane({
   policy,
   automations,
+  fingerprints,
   onDecision: (e) => {
     stats.onDecision(e);
     trackVisitor(e.ip); // the map learns about every client
@@ -307,8 +320,13 @@ const server = http.createServer(async (req, res) => {
       const visible = orgStore.visibleTenantIds(claims.sub);
       snap.tenants = snap.tenants.filter((t) => visible.has(t.tenantId));
     }
-    snap.tenants = snap.tenants.map((t) => ({ ...t, org: orgStore.orgOf(t.tenantId)?.name ?? null }));
-    snap.visitors = [...visitors.values()];
+    snap.tenants = snap.tenants.map((t) => ({ ...t, org: orgStore.orgOf(t.tenantId)?.name ?? null, fingerprint: fingerprints.get(t.tenantId)?.label ?? null }));
+    // A visitor's behavior lives under whichever tenant their traffic hit:
+    // anonymous clients are keyed anon:<ip>, keyed clients under their site.
+    snap.visitors = [...visitors.values()].map((v) => ({
+      ...v,
+      label: (fingerprints.get(`anon:${v.ip}`) ?? fingerprints.get(v.ip))?.label ?? null,
+    }));
     snap.uniqueVisitors = visitors.size;
     return sendJson(res, 200, snap);
   }
@@ -541,7 +559,7 @@ const server = http.createServer(async (req, res) => {
     const context = {
       totals: snap.totals,
       uniqueVisitors: visitors.size,
-      tenants: snap.tenants.map((t) => ({ id: t.tenantId, tier: t.tier, ok: t.allowed, blocked: t.blocked, monthly: t.monthly, bannedMs: t.bannedMs })),
+      tenants: snap.tenants.map((t) => ({ id: t.tenantId, tier: t.tier, behavior: fingerprints.get(t.tenantId)?.label ?? null, ok: t.allowed, blocked: t.blocked, monthly: t.monthly, bannedMs: t.bannedMs })),
       recentDecisions: lp.audit.recent(10),
       autopilot: automations.recent(5),
       plans: PLANS,

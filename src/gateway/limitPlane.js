@@ -27,6 +27,7 @@ export function createLimitPlane({
   monthly = new MonthlyQuotaLimiter(), // the plan meter (only used if a tier sets monthlyQuota)
   audit = new AuditLog(), // the diary
   automations, // optional autopilot: consulted for bans, fed every decision
+  fingerprints, // optional behavioral classifier: picks an adaptive lane
   onDecision, // optional hook: gets every audit event (metrics, alerts...)
 } = {}) {
   const engine = new PolicyEngine(policy);
@@ -79,14 +80,21 @@ export function createLimitPlane({
       month = monthly.check({ key: plan.monthlyKey, quota: plan.monthlyQuota, cost: plan.cost });
     }
 
+    // adaptive lane: the behavioral classifier scales this client's burst
+    // allowance to how they act — humans get roomier bursts, bots get steady
+    // throughput, retry-loops get squeezed. Same tier, behavior-aware limits.
+    const lane = fingerprints ? fingerprints.laneFor(tenantId) : null;
+    const capacity = lane ? Math.max(plan.cost, Math.round(plan.capacity * lane.burstMult)) : plan.capacity;
+    const refillRatePerMs = lane ? plan.refillRatePerMs * lane.refillMult : plan.refillRatePerMs;
+
     // step 3b: the burst limiter — but only spend burst tokens if the plan
     // said yes (a request the plan rejected shouldn't drain the bucket too).
     let result = { allowed: false, remaining: 0 };
     if (!month || month.allowed) {
       result = await limiter.check({
         key: plan.key,
-        capacity: plan.capacity,
-        refillRatePerMs: plan.refillRatePerMs,
+        capacity,
+        refillRatePerMs,
         cost: plan.cost,
       });
     }
@@ -115,7 +123,9 @@ export function createLimitPlane({
       reason,
       monthlyUsed: month?.used,
       monthlyRemaining: month?.remaining,
+      label: lane?.label, // behavioral class at decision time
     });
+    if (fingerprints) fingerprints.observe(event); // learn from this request
     if (automations) automations.onDecision(event); // feed the autopilot
     if (onDecision) onDecision(event);
 
