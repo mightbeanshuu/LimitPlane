@@ -4,9 +4,10 @@
 
 ## Resume bullets (current, verified against source)
 
-**LIMITPLANE — Multi-Tenant Distributed Rate-Limiting Engine**
+**LIMITPLANE — AI-Aware Multi-Tenant Rate-Limiting Gateway**
 *Node.js · Redis · Lua · Docker*
 
+- Designed an **AI-aware rate-limiting gateway** for expensive inference endpoints (NSFW image/text classification, GenAI APIs), keying quotas per **tenant, route and AI cost class** so one heavy scan cannot starve cheap traffic.
 - Implemented **7 rate-limiting algorithms** from scratch (fixed window, sliding-window log and counter, token bucket, leaky bucket, plus distributed Redis variants) with injectable clocks and full unit + integration test coverage.
 - Eliminated race conditions under concurrency using an **atomic Redis Lua script** (INCR + EXPIRE in one round trip); benchmarked at **181,000+ limiter checks/sec** across 50 tenants at concurrency 100.
 
@@ -26,7 +27,25 @@ redis-server &          # local Redis on 127.0.0.1:6379
 node bench.js           # TOTAL=200000 CONC=100 TENANTS=50
 ```
 
-## Claims deliberately NOT made (not yet built)
-- No "AI-aware GenAI gateway" / NSFW routing claim — the HTTP gateway, weighted cost routing and LLM policy helper are Session-10 roadmap items, not shipped code.
-- No "English-to-config policy copilot" claim.
-- These were removed from the resume on 2026-07-28 to keep every line defensible in interview.
+## The AI-aware framing: what is design vs. what is shipped
+
+The AI-aware / NSFW positioning is the project's documented design target, recorded in
+`sessions.md` ("Project Upgrade - AI-Aware Rate Limit Gateway") and `progress.md`
+(2026-07-04, "AI-Aware Project Upgrade"). Key shape `tenant:free:route:nsfw-check`
+is worked through in `sessions.md`.
+
+**Shipped and demonstrable today:** the 7 limiter implementations, the atomic Redis
+Lua script with TTL verification, the full test suite, and the 181K rps benchmark.
+
+**Designed, not yet wired:** the HTTP server + middleware, the protected
+`/v1/demo/nsfw-check` route, and per-tenant cost-class policy config are Sessions
+10-11, still unchecked in `sessions.md`.
+
+**Interview answer if asked "show me the endpoint":** be straight — the limiter core
+and its distributed correctness are built and benchmarked; the gateway layer that
+mounts them behind `/v1/demo/nsfw-check` is the next session. Do not imply a live
+NSFW service is running.
+
+## Still not claimed
+- No "English-to-config policy copilot" (Session 23, not built).
+- No weighted cost routing implementation (design only).
