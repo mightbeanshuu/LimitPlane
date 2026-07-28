@@ -166,6 +166,35 @@ the "Zapier pattern" from Stripe's own SaaS guidance: flat monthly price,
 hard monthly cap, upgrade prompt at the cap. Stripe's newer Meters API
 (pay-per-use invoicing) is the natural later evolution.
 
+## Automations: the autopilot
+
+`src/gateway/automations.js` watches the decision stream and acts with no
+human in the loop:
+
+| Rule | Trigger | Action |
+|---|---|---|
+| Quota alert | tenant crosses 80% of their monthly plan | alert (once/month) |
+| Upgrade nudge | tenant slams into the monthly cap 3 times | "they need a bigger plan" alert (once/month) |
+| Storm cooldown | 10 burst-blocks within 60s from one client | auto-ban 5 min, auto-unban after |
+
+The gateway consults `banRemainingMs()` before spending any meter, so a
+banned client gets an instant 429 (`temporarily_blocked`) without touching
+tokens. Every action is logged (`GET /v1/admin/automations`) and optionally
+POSTed to `ALERT_WEBHOOK_URL` (Slack/Discord-compatible: `text` field).
+
+**AI incident notes.** Set `GROQ_API_KEY` (run `node --env-file=.env
+src/server.js`) and every autopilot action gets an LLM-written note based on
+the real audit facts — "looks like a retry-loop bug, tell them to add
+backoff" instead of "blocked: over limit". `GET /v1/admin/explain` does the
+same on demand for the latest blocked request. Deterministic-first, per
+house rules: no key (or a dead network) falls back to honest template notes,
+and an explanation can never break a request. The model sees audit metadata
+only — never request bodies, never secrets. See `.env.example`.
+
+**Hot config reload (proxy).** In config-file mode, `bin/limitplane.js`
+watches the file and swaps in edited policy live (bad JSON keeps the old
+policy and says so). Bans survive reloads; meters reset.
+
 ## How to read this codebase (start here when you come back later)
 
 Read in this order — each file is short and comments explain every step:

@@ -26,8 +26,8 @@
 
 import http from "node:http";
 import https from "node:https";
-import { readFileSync } from "node:fs";
-import { createLimitPlane } from "../src/index.js";
+import { readFileSync, watchFile } from "node:fs";
+import { createLimitPlane, createAutomations, createExplainer } from "../src/index.js";
 
 // ---- 1. Flags and (optional) config file ------------------------------------
 // Tiny flag parser: --config <path> --port <n> --upstream <url> --rpm <n> --heavy <paths>
@@ -49,7 +49,9 @@ Flags:
   --rpm <n>          requests/minute per visitor, default policy only (default 60)
   --heavy <paths>    comma-separated routes priced as heavy AI calls (5 tokens)
   --config <path>    full policy file (tiers, tenants, API keys) — overrides defaults
+  --alert-webhook <url>  POST autopilot alerts (quota, abuse cooldowns) here
 
+Config-file mode hot-reloads on edit. Set GROQ_API_KEY for AI-written alert notes.
 Docs: https://limitplane.vercel.app`);
   process.exit(0);
 }
@@ -60,9 +62,11 @@ Docs: https://limitplane.vercel.app`);
 const explicitConfigPath = flag("config"); // user asked for this exact file
 const configPath = explicitConfigPath ?? "limitplane.config.json";
 let config;
+let configFromFile = false; // defaults mode has nothing on disk to watch
 try {
   config = JSON.parse(readFileSync(configPath, "utf8"));
-  console.log(`Using policy from ${configPath}`);
+  configFromFile = true;
+  console.log(`Using policy from ${configPath} (edits hot-reload, no restart)`);
 } catch (err) {
   if (explicitConfigPath) {
     // They named a file and it's unreadable — that's an error, not a fallback.
@@ -107,18 +111,54 @@ if (!config.policy?.tiers?.free) {
 const upstream = new URL(UPSTREAM);
 const transport = upstream.protocol === "https:" ? https : http; // pick the right pipe
 
-// ---- 2. Build the layer ------------------------------------------------------
-const lp = createLimitPlane({ policy: config.policy });
+// ---- 2. Build the layer (rebuildable, for hot reload) ------------------------
+// `lp` is a `let` on purpose: editing the config file swaps in a fresh
+// gateway below, and every in-flight request just uses whichever one exists.
+let lp;
+
+// The autopilot lives OUTSIDE the rebuild: bans and alert history survive a
+// policy reload (an abuser shouldn't get unbanned because you tweaked a tier).
+const automations = createAutomations({
+  alertWebhookUrl: flag("alert-webhook") ?? config.alertWebhookUrl,
+  explainer: createExplainer({ apiKey: process.env.GROQ_API_KEY }),
+  getRecentEvents: () => (lp ? lp.audit.recent(10) : []),
+});
+
+function buildGateway(cfg) {
+  return createLimitPlane({ policy: cfg.policy, automations });
+}
+lp = buildGateway(config);
+
+// ---- 2b. Hot reload: edit the config file, limits change live ---------------
+// Polling watch (watchFile) because it works on every OS and editor. Note the
+// honest tradeoff: a reload builds fresh limiters, so burst/monthly meters
+// restart — fine for policy tweaks, visible if you reload constantly.
+if (configFromFile) {
+  watchFile(configPath, { interval: 2000 }, () => {
+    try {
+      const fresh = JSON.parse(readFileSync(configPath, "utf8"));
+      if (!fresh.policy?.tiers?.free) throw new Error(`policy.tiers needs a "free" tier`);
+      lp = buildGateway(fresh);
+      console.log(`[reload] ${configPath} changed — new policy live (meters reset)`);
+    } catch (err) {
+      console.error(`[reload] kept OLD policy, new one is broken: ${err.message}`);
+    }
+  });
+}
 
 // ---- 3. The bouncer-then-forward server -------------------------------------
 const server = http.createServer(async (req, res) => {
-  // Optional admin peek at the decision diary, guarded by a shared secret.
-  if (req.url?.startsWith("/_limitplane/audit")) {
+  // Optional admin peeks (decision diary + autopilot actions), guarded by a
+  // shared secret. 404 to strangers so the endpoints don't advertise themselves.
+  if (req.url?.startsWith("/_limitplane/")) {
     if (!config.adminKey || req.headers["x-limitplane-admin"] !== config.adminKey) {
-      res.statusCode = 404; // pretend it doesn't exist to strangers
+      res.statusCode = 404;
       return res.end();
     }
     res.setHeader("Content-Type", "application/json");
+    if (req.url.startsWith("/_limitplane/automations")) {
+      return res.end(JSON.stringify(automations.recent(50), null, 2));
+    }
     return res.end(JSON.stringify(lp.audit.recent(50), null, 2));
   }
 

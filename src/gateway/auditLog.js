@@ -16,17 +16,12 @@ export class AuditLog {
   }
 
   // Write one decision down. Returns the event so callers can also emit it.
-  record({ allowed, key, route, tenantId, tier, costClass, cost, remaining }) {
+  // Takes the WHOLE fact object as-is: the diary must never silently drop a
+  // field the gateway thought it recorded (reason, monthly usage, ...).
+  record(facts) {
     const event = {
       at: this.now(), // when it happened
-      allowed, // did it get through?
-      key, // which jar was charged
-      route,
-      tenantId,
-      tier,
-      costClass,
-      cost, // tokens it tried to spend
-      remaining, // tokens left in the jar after the decision
+      ...facts, // allowed, key, route, tenant, cost, reason, monthly usage...
     };
 
     this.events.push(event);

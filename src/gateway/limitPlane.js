@@ -26,6 +26,7 @@ export function createLimitPlane({
   limiter = new TokenBucketLimiter(), // the burst muscle; swap in Redis for multi-server
   monthly = new MonthlyQuotaLimiter(), // the plan meter (only used if a tier sets monthlyQuota)
   audit = new AuditLog(), // the diary
+  automations, // optional autopilot: consulted for bans, fed every decision
   onDecision, // optional hook: gets every audit event (metrics, alerts...)
 } = {}) {
   const engine = new PolicyEngine(policy);
@@ -38,6 +39,38 @@ export function createLimitPlane({
   async function check({ apiKey, ip, route }) {
     const { tenantId, tier } = engine.identify({ apiKey, ip }); // step 1: who
     const plan = engine.resolve({ tenantId, tier, route }); // step 2: what jar, what price
+
+    // step 0 (autopilot): is this client serving an auto-cooldown ban?
+    // Checked BEFORE any meter so a banned client can't even spend tokens.
+    const banMs = automations ? automations.banRemainingMs(tenantId) : 0;
+    if (banMs > 0) {
+      const event = audit.record({
+        allowed: false,
+        key: plan.key,
+        route,
+        tenantId,
+        tier,
+        costClass: plan.costClass,
+        cost: plan.cost,
+        remaining: 0,
+        reason: "auto_cooldown",
+      });
+      automations.onDecision(event); // it ignores its own bans, but the diary line still flows
+      if (onDecision) onDecision(event);
+      return {
+        allowed: false,
+        reason: "auto_cooldown",
+        remaining: 0,
+        limit: plan.capacity,
+        cost: plan.cost,
+        costClass: plan.costClass,
+        retryAfterMs: banMs,
+        tenantId,
+        tier,
+        monthly: null,
+        monthlyQuota: plan.monthlyQuota,
+      };
+    }
 
     // step 3a: the monthly plan meter (skipped when the tier has no cap)
     let month = null;
@@ -81,6 +114,7 @@ export function createLimitPlane({
       monthlyUsed: month?.used,
       monthlyRemaining: month?.remaining,
     });
+    if (automations) automations.onDecision(event); // feed the autopilot
     if (onDecision) onDecision(event);
 
     return {
@@ -125,7 +159,17 @@ export function createLimitPlane({
       res.statusCode = 429;
       res.setHeader("Content-Type", "application/json");
 
-      if (decision.reason === "monthly_quota") {
+      if (decision.reason === "auto_cooldown") {
+        const retryAfterSeconds = Math.ceil(decision.retryAfterMs / 1000);
+        res.setHeader("Retry-After", String(retryAfterSeconds));
+        res.end(
+          JSON.stringify({
+            error: "temporarily_blocked",
+            message: `Too many rapid-fire blocked requests (looks like a retry loop or abuse). Auto-cooldown lifts in ~${retryAfterSeconds}s.`,
+            retryAfterSeconds,
+          })
+        );
+      } else if (decision.reason === "monthly_quota") {
         const resetsAt = new Date(decision.monthly.resetsAt).toISOString();
         res.setHeader("Retry-After", String(Math.ceil((decision.monthly.resetsAt - Date.now()) / 1000)));
         res.end(

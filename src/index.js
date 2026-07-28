@@ -10,6 +10,8 @@ export { createLimitPlane } from "./gateway/limitPlane.js";
 export { PolicyEngine, classifyCost, COST_CLASSES } from "./gateway/policyEngine.js";
 export { AuditLog } from "./gateway/auditLog.js";
 export { createBilling, TenantStore, PLANS } from "./billing/stripeBilling.js";
+export { createAutomations } from "./gateway/automations.js";
+export { createExplainer } from "./ai/aiExplainer.js";
 export { MonthlyQuotaLimiter } from "./algorithms/monthlyQuotaLimiter.js";
 
 // The raw muscles, for direct use or benchmarks:

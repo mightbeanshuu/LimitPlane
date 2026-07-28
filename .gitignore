@@ -2,3 +2,4 @@
 .firecrawl/
 node_modules/
 site/.vercel/
+.env

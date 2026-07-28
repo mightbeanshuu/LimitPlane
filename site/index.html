@@ -302,7 +302,8 @@ if (!d.allowed) return;            // 429 already sent</pre><button class="copy"
       <div class="card"><h3><span class="ic"></span>Billing you can read</h3><p>Stripe integration in one file with zero SDKs: raw HTTPS, form encoding, and one HMAC for webhook signatures. Swap in the official SDK later; nothing structural changes.</p></div>
       <div class="card"><h3><span class="ic"></span>Two-meter design</h3><p>The monthly meter protects the customer's wallet; the burst bucket protects your servers. A blocked plan never drains burst tokens.</p></div>
       <div class="card"><h3><span class="ic"></span>Tenant isolation</h3><p>Buckets are keyed tenant:tier:route. One customer burning their budget mathematically cannot touch anyone else's.</p></div>
-      <div class="card"><h3><span class="ic"></span>Deterministic tests</h3><p>Injectable clocks everywhere, so tests fast-forward to next month instead of sleeping. 25 unit tests cover allow, block, reset, isolation, and billing automation.</p></div>
+      <div class="card"><h3><span class="ic"></span>Autopilot with an AI voice</h3><p>Quota alerts at 80%, upgrade nudges at the cap, and auto-cooldown bans for retry-storms. Each action ships with an LLM-written incident note based on real audit facts, falling back to templates when no key is set.</p></div>
+      <div class="card"><h3><span class="ic"></span>Deterministic tests</h3><p>Injectable clocks everywhere, so tests fast-forward to next month instead of sleeping. 32 unit tests cover allow, block, reset, isolation, billing, and the autopilot.</p></div>
       <div class="card"><h3><span class="ic"></span>Fails loudly</h3><p>Unknown tiers, plans, or cost classes throw at config time. Unsigned webhooks are rejected before a byte is trusted.</p></div>
     </div>
   </div>

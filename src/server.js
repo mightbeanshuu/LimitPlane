@@ -14,6 +14,8 @@
 
 import http from "node:http";
 import { createLimitPlane } from "./gateway/limitPlane.js";
+import { createAutomations } from "./gateway/automations.js";
+import { createExplainer } from "./ai/aiExplainer.js";
 import { classifyText } from "./demo/nsfwStub.js";
 import { createBilling, TenantStore, PLANS } from "./billing/stripeBilling.js";
 
@@ -39,7 +41,17 @@ const policy = {
   tenants, // NOTE: the SAME object the TenantStore mutates — that's the automation
 };
 
-const lp = createLimitPlane({ policy });
+// ---- The autopilot + its AI voice --------------------------------------------
+// explainer: LLM-written incident notes when GROQ_API_KEY is set (run with
+// `node --env-file=.env src/server.js`), honest template notes when it isn't.
+const explainer = createExplainer({ apiKey: process.env.GROQ_API_KEY });
+const automations = createAutomations({
+  alertWebhookUrl: process.env.ALERT_WEBHOOK_URL, // e.g. a Slack webhook
+  explainer,
+  getRecentEvents: () => lp.audit.recent(10), // audit context for the AI
+});
+
+const lp = createLimitPlane({ policy, automations });
 
 // ---- Billing: live if env keys are set, honest demo mode if not -------------
 const tenantStore = new TenantStore({ tenants, file: process.env.TENANTS_FILE });
@@ -127,6 +139,23 @@ const server = http.createServer(async (req, res) => {
   // Admin peek at the diary — also outside the limiter, for debugging.
   if (route === "/v1/admin/audit") {
     return sendJson(res, 200, lp.audit.recent(20));
+  }
+
+  // What has the autopilot DONE? (alerts, nudges, cooldowns + AI notes)
+  if (route === "/v1/admin/automations") {
+    return sendJson(res, 200, { aiExplainer: explainer.liveMode ? "live" : "fallback", actions: automations.recent(20) });
+  }
+
+  // On-demand explanation of the latest blocked request, from real facts.
+  if (route === "/v1/admin/explain") {
+    const recent = lp.audit.recent(20);
+    const lastBlocked = recent.find((e) => !e.allowed);
+    if (!lastBlocked) return sendJson(res, 200, { explanation: "Nothing has been blocked recently." });
+    const explanation = await explainer.explain(
+      { type: "blocked_request", ...lastBlocked, message: `Blocked: ${lastBlocked.reason}` },
+      recent
+    );
+    return sendJson(res, 200, { event: lastBlocked, explanation, source: explainer.liveMode ? "groq" : "fallback" });
   }
 
   // >>> THE LAYER: one call guards every route below this line. <<<
