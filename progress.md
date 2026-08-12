@@ -39,7 +39,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 21:43 IST - Setup
-- Command: `find /Users/mac/Desktop/LimitPlane -maxdepth 2 -type f -not -path '*/.git/*' -print`
+- Command: `find /Users/mac/Desktop/01-Projects/LimitPlane -maxdepth 2 -type f -not -path '*/.git/*' -print`
 - Reason: Inspect current project files before adding Claude/session files.
 - Result: Success; only `progress.md` existed at that point.
 - Files changed: none
@@ -48,7 +48,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 21:43 IST - Setup
-- Command: `test -e /Users/mac/Desktop/LimitPlane/CLAUDE.md; printf '%s\n' $?`
+- Command: `test -e /Users/mac/Desktop/01-Projects/LimitPlane/CLAUDE.md; printf '%s\n' $?`
 - Reason: Check whether Claude project memory already existed.
 - Result: Success; file did not exist.
 - Files changed: none
@@ -93,7 +93,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 21:43 IST - Setup
-- Command: `mkdir -p /Users/mac/Desktop/LimitPlane/.claude/skills/limitplane-tutor`
+- Command: `mkdir -p /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/limitplane-tutor`
 - Reason: Create Claude project skill directory.
 - Result: Success.
 - Files changed: `.claude/skills/limitplane-tutor/`
@@ -134,7 +134,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 21:43 IST - Setup
-- Command: `find /Users/mac/Desktop/LimitPlane -maxdepth 4 -type f -not -path '*/.git/*' -print`
+- Command: `find /Users/mac/Desktop/01-Projects/LimitPlane -maxdepth 4 -type f -not -path '*/.git/*' -print`
 - Reason: Inspect final project files after adding Claude/session artifacts.
 - Result: Success; project contains `progress.md`, `sessions.md`, `CLAUDE.md`, and `.claude/skills/limitplane-tutor/SKILL.md`.
 - Files changed: none
@@ -179,7 +179,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 21:47 IST - Setup
-- Command: `sed -n '1,240p' /Users/mac/Desktop/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md`
+- Command: `sed -n '1,240p' /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md`
 - Reason: Review current Claude project tutor skill before adding adaptive learning behavior.
 - Result: Success.
 - Files changed: none
@@ -188,7 +188,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 21:47 IST - Setup
-- Command: `sed -n '1,180p' /Users/mac/Desktop/LimitPlane/CLAUDE.md`
+- Command: `sed -n '1,180p' /Users/mac/Desktop/01-Projects/LimitPlane/CLAUDE.md`
 - Reason: Review Claude project instructions before adding learner adaptation guidance.
 - Result: Success.
 - Files changed: none
@@ -238,7 +238,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: Commit files later if the user wants version control history.
 
 ## 2026-06-30 21:47 IST - Setup
-- Command: `rg -n "Adaptive Learning|Learner Adaptation|grasp speed|Confidence|spaced" /Users/mac/.codex/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/LimitPlane/CLAUDE.md /Users/mac/Desktop/LimitPlane/sessions.md`
+- Command: `rg -n "Adaptive Learning|Learner Adaptation|grasp speed|Confidence|spaced" /Users/mac/.codex/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/01-Projects/LimitPlane/CLAUDE.md /Users/mac/Desktop/01-Projects/LimitPlane/sessions.md`
 - Reason: Verify adaptive-learning terms were added across Codex, Claude, project memory, and sessions tracker.
 - Result: Success; adaptive-learning sections and learner profile fields found.
 - Files changed: none
@@ -292,7 +292,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:11 IST - Setup
-- Command: `sed -n '1,280p' /Users/mac/Desktop/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md`
+- Command: `sed -n '1,280p' /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md`
 - Reason: Review current Claude tutor skill before route/PDF refinement.
 - Result: Success.
 - Files changed: none
@@ -301,7 +301,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:11 IST - Setup
-- Command: `sed -n '1,220p' /Users/mac/Desktop/LimitPlane/sessions.md`
+- Command: `sed -n '1,220p' /Users/mac/Desktop/01-Projects/LimitPlane/sessions.md`
 - Reason: Review session tracker before adding route and prerequisite fields.
 - Result: Success.
 - Files changed: none
@@ -337,7 +337,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:11 IST - Setup
-- Command: `sed -n '1,220p' /Users/mac/Desktop/LimitPlane/CLAUDE.md`
+- Command: `sed -n '1,220p' /Users/mac/Desktop/01-Projects/LimitPlane/CLAUDE.md`
 - Reason: Review Claude project instructions before adding route and `/loop` guidance.
 - Result: Success.
 - Files changed: none
@@ -355,7 +355,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:11 IST - Setup
-- Command: `nl -ba /Users/mac/Desktop/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md | sed -n '1,220p'`
+- Command: `nl -ba /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md | sed -n '1,220p'`
 - Reason: Inspect exact Claude skill line layout before patching.
 - Result: Success.
 - Files changed: none
@@ -388,7 +388,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:11 IST - Setup
-- Command: ``rg -n "Learning Routes|Complexity Decomposition|Small Code Term|Claude `/loop`|loop.md|Prerequisite|Recurring difficult|summary PDF|headless Chrome" /Users/mac/.codex/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/LimitPlane/CLAUDE.md /Users/mac/Desktop/LimitPlane/sessions.md /Users/mac/Desktop/LimitPlane/.claude/loop.md``
+- Command: ``rg -n "Learning Routes|Complexity Decomposition|Small Code Term|Claude `/loop`|loop.md|Prerequisite|Recurring difficult|summary PDF|headless Chrome" /Users/mac/.codex/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/01-Projects/LimitPlane/CLAUDE.md /Users/mac/Desktop/01-Projects/LimitPlane/sessions.md /Users/mac/Desktop/01-Projects/LimitPlane/.claude/loop.md``
 - Reason: Verify new sections across all files.
 - Result: Failed partially due shell command substitution from unescaped backticks around `/loop`; command still printed some matches but produced `zsh:1: no such file or directory: /loop`.
 - Files changed: none
@@ -406,7 +406,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: Commit files later if the user wants version control history.
 
 ## 2026-06-30 22:11 IST - Setup
-- Command: ``rg -n 'Learning Routes|Complexity Decomposition|Small Code Term|Claude `/loop`|loop.md|Prerequisite|Recurring difficult|summary PDF|headless Chrome' /Users/mac/.codex/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/LimitPlane/CLAUDE.md /Users/mac/Desktop/LimitPlane/sessions.md /Users/mac/Desktop/LimitPlane/.claude/loop.md``
+- Command: ``rg -n 'Learning Routes|Complexity Decomposition|Small Code Term|Claude `/loop`|loop.md|Prerequisite|Recurring difficult|summary PDF|headless Chrome' /Users/mac/.codex/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md /Users/mac/Desktop/01-Projects/LimitPlane/CLAUDE.md /Users/mac/Desktop/01-Projects/LimitPlane/sessions.md /Users/mac/Desktop/01-Projects/LimitPlane/.claude/loop.md``
 - Reason: Re-run section verification with safe quoting.
 - Result: Success; new route, decomposition, small-term, PDF, and `/loop` sections found.
 - Files changed: none
@@ -460,7 +460,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:37 IST - Setup
-- Command: `find /Users/mac/Desktop/LimitPlane -maxdepth 4 -type f -not -path '*/.git/*' -print`
+- Command: `find /Users/mac/Desktop/01-Projects/LimitPlane -maxdepth 4 -type f -not -path '*/.git/*' -print`
 - Reason: Inspect project files before generalizing the skill.
 - Result: Success; found tutor/project files and `.claude/settings.local.json`.
 - Files changed: none
@@ -469,7 +469,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: Do not commit local Claude settings.
 
 ## 2026-06-30 22:37 IST - Setup
-- Command: `sed -n '1,220p' /Users/mac/Desktop/LimitPlane/.claude/settings.local.json`
+- Command: `sed -n '1,220p' /Users/mac/Desktop/01-Projects/LimitPlane/.claude/settings.local.json`
 - Reason: Inspect Claude local settings before deciding whether to commit.
 - Result: Success; file only enables the local Firecrawl MCP server and should stay local.
 - Files changed: none
@@ -478,7 +478,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: Keep `.claude/settings.local.json` ignored.
 
 ## 2026-06-30 22:37 IST - Setup
-- Command: `sed -n '1,260p' /Users/mac/Desktop/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md`
+- Command: `sed -n '1,260p' /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/limitplane-tutor/SKILL.md`
 - Reason: Review the existing project skill before replacing it with a generalized skill.
 - Result: Success.
 - Files changed: none
@@ -496,7 +496,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:37 IST - Setup
-- Command: `sed -n '1,260p' /Users/mac/Desktop/LimitPlane/sessions.md`
+- Command: `sed -n '1,260p' /Users/mac/Desktop/01-Projects/LimitPlane/sessions.md`
 - Reason: Review session tracker before changing tutor skill references.
 - Result: Success.
 - Files changed: none
@@ -514,7 +514,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:37 IST - Setup
-- Command: `test -e /Users/mac/Desktop/LimitPlane/.claude/skills/tech-learning-tutor; printf '%s\n' $?`
+- Command: `test -e /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/tech-learning-tutor; printf '%s\n' $?`
 - Reason: Check whether the generalized Claude project skill already existed.
 - Result: Success; skill did not exist.
 - Files changed: none
@@ -552,7 +552,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:37 IST - Setup
-- Command: `mkdir -p /Users/mac/Desktop/LimitPlane/.claude/skills/tech-learning-tutor`
+- Command: `mkdir -p /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills/tech-learning-tutor`
 - Reason: Create the Claude project skill directory for the generalized tutor.
 - Result: Success.
 - Files changed: `.claude/skills/tech-learning-tutor/`
@@ -587,7 +587,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:37 IST - Setup
-- Command: `rg -n 'tech-learning-tutor|LimitPlane Tutor|limitplane-tutor|any technical skill|Learning Routes|Small Code Term|Claude `/loop`' /Users/mac/Desktop/LimitPlane/.claude/skills /Users/mac/Desktop/LimitPlane/CLAUDE.md /Users/mac/Desktop/LimitPlane/.claude/loop.md /Users/mac/Desktop/LimitPlane/sessions.md /Users/mac/.codex/skills/tech-learning-tutor/SKILL.md`
+- Command: `rg -n 'tech-learning-tutor|LimitPlane Tutor|limitplane-tutor|any technical skill|Learning Routes|Small Code Term|Claude `/loop`' /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills /Users/mac/Desktop/01-Projects/LimitPlane/CLAUDE.md /Users/mac/Desktop/01-Projects/LimitPlane/.claude/loop.md /Users/mac/Desktop/01-Projects/LimitPlane/sessions.md /Users/mac/.codex/skills/tech-learning-tutor/SKILL.md`
 - Reason: Verify generalized skill references and find stale old-skill references.
 - Result: Success; found one stale historical sessions reference to old Codex skill, later corrected.
 - Files changed: none
@@ -605,7 +605,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:37 IST - Setup
-- Command: `find /Users/mac/Desktop/LimitPlane/.claude/skills -maxdepth 3 -type f -print`
+- Command: `find /Users/mac/Desktop/01-Projects/LimitPlane/.claude/skills -maxdepth 3 -type f -print`
 - Reason: Confirm only the generalized Claude project skill remains.
 - Result: Success; only `.claude/skills/tech-learning-tutor/SKILL.md` exists.
 - Files changed: none
@@ -767,7 +767,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: Make public after cleanup.
 
 ## 2026-06-30 22:45 IST - Repo Split
-- Command: `test -e /Users/mac/Desktop/tech-learner-skill; printf '%s\n' $?`
+- Command: `test -e /Users/mac/Desktop/01-Projects/tech-learner-skill; printf '%s\n' $?`
 - Reason: Check whether the standalone skill repo directory already existed.
 - Result: Success; directory did not exist.
 - Files changed: none
@@ -776,34 +776,34 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: Create standalone skill repo directory.
 
 ## 2026-06-30 22:45 IST - Repo Split
-- Command: `mkdir -p /Users/mac/Desktop/tech-learner-skill/agents`
+- Command: `mkdir -p /Users/mac/Desktop/01-Projects/tech-learner-skill/agents`
 - Reason: Create local standalone skill repo directory.
 - Result: Success.
-- Files changed: `/Users/mac/Desktop/tech-learner-skill/`
+- Files changed: `/Users/mac/Desktop/01-Projects/tech-learner-skill/`
 - Dependencies changed: none
 - Learner stuck point: none
 - Revisit later: none
 
 ## 2026-06-30 22:45 IST - Repo Split
-- Command: `cp /Users/mac/.codex/skills/tech-learning-tutor/SKILL.md /Users/mac/Desktop/tech-learner-skill/SKILL.md`
+- Command: `cp /Users/mac/.codex/skills/tech-learning-tutor/SKILL.md /Users/mac/Desktop/01-Projects/tech-learner-skill/SKILL.md`
 - Reason: Copy the generalized skill into the standalone repo root.
 - Result: Success.
-- Files changed: `/Users/mac/Desktop/tech-learner-skill/SKILL.md`
+- Files changed: `/Users/mac/Desktop/01-Projects/tech-learner-skill/SKILL.md`
 - Dependencies changed: none
 - Learner stuck point: none
 - Revisit later: none
 
 ## 2026-06-30 22:45 IST - Repo Split
-- Command: `cp /Users/mac/.codex/skills/tech-learning-tutor/agents/openai.yaml /Users/mac/Desktop/tech-learner-skill/agents/openai.yaml`
+- Command: `cp /Users/mac/.codex/skills/tech-learning-tutor/agents/openai.yaml /Users/mac/Desktop/01-Projects/tech-learner-skill/agents/openai.yaml`
 - Reason: Copy agent metadata into the standalone skill repo.
 - Result: Success.
-- Files changed: `/Users/mac/Desktop/tech-learner-skill/agents/openai.yaml`
+- Files changed: `/Users/mac/Desktop/01-Projects/tech-learner-skill/agents/openai.yaml`
 - Dependencies changed: none
 - Learner stuck point: none
 - Revisit later: none
 
 ## 2026-06-30 22:45 IST - Repo Split
-- Command: `python3 /Users/mac/.codex/skills/.system/skill-creator/scripts/quick_validate.py /Users/mac/Desktop/tech-learner-skill`
+- Command: `python3 /Users/mac/.codex/skills/.system/skill-creator/scripts/quick_validate.py /Users/mac/Desktop/01-Projects/tech-learner-skill`
 - Reason: Validate standalone skill repo structure.
 - Result: Success; `Skill is valid!`
 - Files changed: none
@@ -815,7 +815,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Command: `git init`
 - Reason: Initialize the standalone skill repo.
 - Result: Success.
-- Files changed: `/Users/mac/Desktop/tech-learner-skill/.git/`
+- Files changed: `/Users/mac/Desktop/01-Projects/tech-learner-skill/.git/`
 - Dependencies changed: none
 - Learner stuck point: none
 - Revisit later: none
@@ -833,7 +833,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Command: `git add SKILL.md agents/openai.yaml`
 - Reason: Stage standalone skill repo files.
 - Result: Success.
-- Files changed: `/Users/mac/Desktop/tech-learner-skill/.git/index`
+- Files changed: `/Users/mac/Desktop/01-Projects/tech-learner-skill/.git/index`
 - Dependencies changed: none
 - Learner stuck point: none
 - Revisit later: none
@@ -842,7 +842,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Command: `git commit -m "Add generalized tech learner skill"`
 - Reason: Commit standalone skill repo.
 - Result: Success; commit `85fac54`.
-- Files changed: git history updated in `/Users/mac/Desktop/tech-learner-skill`
+- Files changed: git history updated in `/Users/mac/Desktop/01-Projects/tech-learner-skill`
 - Dependencies changed: none
 - Learner stuck point: none
 - Revisit later: none
@@ -880,7 +880,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: none
 
 ## 2026-06-30 22:45 IST - Repo Split
-- Command: `find /Users/mac/Desktop/LimitPlane -maxdepth 4 -type f -not -path '*/.git/*' -print`
+- Command: `find /Users/mac/Desktop/01-Projects/LimitPlane -maxdepth 4 -type f -not -path '*/.git/*' -print`
 - Reason: Confirm no committed skill files remain in LimitPlane working tree.
 - Result: Success; only `progress.md`, `.gitignore`, and ignored local Claude settings remain.
 - Files changed: none
@@ -933,7 +933,7 @@ Build a production-style distributed, multi-tenant rate limiter with Redis/Lua, 
 - Revisit later: Add `package.json`, TypeScript config, dependencies, and first implementation only after revision and guided coding starts.
 
 ## 2026-07-04 20:23 IST - AI-Aware Project Upgrade
-- Command: `sed -n '1,260p' /Users/mac/.codex/skills/limitplane-tutor/SKILL.md`; `sed -n '1,260p' /Users/mac/.agents/skills/firecrawl-parse/SKILL.md`; `find /Users/mac/Desktop/LimitPlane /Users/mac/Desktop -maxdepth 2 -name 'DIP_Problem_statements_6th_sem.pdf' -print`; `sed -n '1,260p' sessions.md`; `find /Users/mac -name 'DIP_Problem_statements_6th_sem.pdf' -print` (stopped after broader search found enough and hit protected macOS folders); `find /Users/mac/Desktop -iname '*DIP*6th*sem*.pdf' -print`; `find /Users/mac/Downloads -iname '*.pdf' -maxdepth 2 -print`; `mkdir -p .firecrawl`; `firecrawl parse /Users/mac/Downloads/DIP_Problem_statements_6th_sem.pdf -o .firecrawl/dip_problem_statements_6th_sem.md`; `sed -n '1,240p' .firecrawl/dip_problem_statements_6th_sem.md`; `rg -n "AI|ML|Gen|generative|analytics|dashboard|monitor|security|web|system|cloud|API|data|IoT|health|education|traffic|prediction|recommend|automation" .firecrawl/dip_problem_statements_6th_sem.md`; `wc -l .firecrawl/dip_problem_statements_6th_sem.md`; `mkdir -p src/ai src/audit src/demo docs/session-notes`; `date '+%Y-%m-%d %H:%M %Z'`; `git status --short`; `find . -maxdepth 3 -type f -not -path './.git/*' -print | sort`; `sed -n '1,120p' .gitignore`; `tail -n 80 progress.md`
+- Command: `sed -n '1,260p' /Users/mac/.codex/skills/limitplane-tutor/SKILL.md`; `sed -n '1,260p' /Users/mac/.agents/skills/firecrawl-parse/SKILL.md`; `find /Users/mac/Desktop/01-Projects/LimitPlane /Users/mac/Desktop -maxdepth 2 -name 'DIP_Problem_statements_6th_sem.pdf' -print`; `sed -n '1,260p' sessions.md`; `find /Users/mac -name 'DIP_Problem_statements_6th_sem.pdf' -print` (stopped after broader search found enough and hit protected macOS folders); `find /Users/mac/Desktop -iname '*DIP*6th*sem*.pdf' -print`; `find /Users/mac/Downloads -iname '*.pdf' -maxdepth 2 -print`; `mkdir -p .firecrawl`; `firecrawl parse /Users/mac/Downloads/DIP_Problem_statements_6th_sem.pdf -o .firecrawl/dip_problem_statements_6th_sem.md`; `sed -n '1,240p' .firecrawl/dip_problem_statements_6th_sem.md`; `rg -n "AI|ML|Gen|generative|analytics|dashboard|monitor|security|web|system|cloud|API|data|IoT|health|education|traffic|prediction|recommend|automation" .firecrawl/dip_problem_statements_6th_sem.md`; `wc -l .firecrawl/dip_problem_statements_6th_sem.md`; `mkdir -p src/ai src/audit src/demo docs/session-notes`; `date '+%Y-%m-%d %H:%M %Z'`; `git status --short`; `find . -maxdepth 3 -type f -not -path './.git/*' -print | sort`; `sed -n '1,120p' .gitignore`; `tail -n 80 progress.md`
 - Reason: Inspect the DIP problem-statement PDF and upgrade LimitPlane with a feasible GenAI/AI-API angle before Session 3.
 - Result: Success; PDF parsed locally, NSFW Website Detection API identified as the closest fit, and project scope upgraded to an AI-aware distributed rate-limit gateway for expensive AI endpoints.
 - Files changed: `.gitignore`, `README.md`, `docs/project-upgrade.md`, `src/ai/.gitkeep`, `src/audit/.gitkeep`, `src/demo/.gitkeep`, `docs/session-notes/.gitkeep`, `sessions.md`, `progress.md`; local ignored parse output `.firecrawl/dip_problem_statements_6th_sem.md`

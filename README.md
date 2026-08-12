@@ -1,11 +1,12 @@
 # LimitPlane
 
-**An AI-aware rate-limiting layer you drop in front of any site.**
+**An AI-aware rate-limiting layer you drop in front of any site.** Written in
+Go, with zero third-party dependencies.
 
-Site: **https://limitplane.vercel.app**
+Site: **https://limitplane.vercel.app** · Gateway: **https://limitplane.onrender.com**
 
 Modern APIs have a new problem: not all requests cost the same. A health-check
-ping costs microseconds; an AI inference call (an NSFW image/text scan, a GenAI
+ping costs microseconds; an AI inference call (an NSFW scan, a GenAI
 completion) costs real GPU money. A limiter that counts them equally lets one
 tenant's heavy AI traffic starve everyone. LimitPlane prices requests by **AI
 cost class** and budgets them per **tenant + tier + route**.
@@ -14,274 +15,319 @@ cost class** and budgets them per **tenant + tier + route**.
             ┌─────────────────────────────────────────────┐
  request ──▶│                LIMITPLANE LAYER             │──▶ your routes
             │                                             │
-            │ 1. WHO?   x-api-key → tenant + tier         │
-            │ 2. WHAT?  route → cost class (light 1 /     │
-            │           standard 2 / heavy 5 tokens)      │
-            │ 3. CHECK  token bucket per                  │
-            │           tenant:tier:route                 │
-            │ 4. TELL   X-RateLimit-* headers always      │
-            │ 5. BLOCK  429 + Retry-After + plain-English │
-            │           reason, logged to the audit diary │
+            │ 0. BANNED? autopilot cooldown, before any   │
+            │            meter is spent                   │
+            │ 1. WHO?    x-api-key → tenant + tier        │
+            │ 2. WHAT?   route → cost class (light 1 /    │
+            │            standard 2 / heavy 5 tokens)     │
+            │ 3. CHECK   monthly plan, then burst bucket  │
+            │ 4. TELL    X-RateLimit-* headers always     │
+            │ 5. BLOCK   429 + Retry-After + a reason     │
+            │            worth reading                    │
+            │ 6. AUDIT   the decision, allowed or not     │
             └─────────────────────────────────────────────┘
+```
+
+## Why Go
+
+The limiter is pure CPU work over in-memory state — precisely what a
+single-threaded runtime cannot scale. The original Node implementation measured
+**~181,000 admission checks/sec**, and that was a ceiling imposed by the
+runtime, not the algorithm: JavaScript runs one callback at a time, so no
+number of cores helps.
+
+The Go token bucket, benchmarked with `go test -bench` on an Apple M2:
+
+| Benchmark | Throughput | ns/op | allocs/op |
+|---|---|---|---|
+| Serial, one key | **18.7M checks/sec** | 53.4 | 0 |
+| Parallel, 512 tenants | **14.4M checks/sec** | 69.6 | 0 |
+| Parallel, one hot key (worst case) | **6.8M checks/sec** | 146 | 0 |
+
+Reproduce: `go test -bench=. -benchtime=2s ./internal/limiter/`
+
+Two things make that possible. The bucket map is **sharded** (lock striping) so
+admission decisions do not all serialise on one mutex — `-bench=ShardCount`
+shows the curve from 1 shard upward. And the hot path allocates nothing, so the
+garbage collector never sees the traffic.
+
+The port was not a transliteration. Node's event loop made every shared map
+safe *by accident*; Go serves handlers in parallel, so each store is explicitly
+synchronised and the entire suite runs under `-race`.
+
+## Zero dependencies, on purpose
+
+`go.mod` has no `require` block, and CI fails the build if one appears. Written
+from scratch rather than pulled in:
+
+| Thing | Where | Why it is worth reading |
+|---|---|---|
+| Redis client | `internal/redisclient` | The RESP wire protocol is ~5 message types |
+| JWT (HS256) | `internal/authjwt` | Sign and verify are one HMAC each |
+| Stripe webhooks | `internal/billing` | Signature verification is one more HMAC |
+| WebSocket server | `internal/wshub` | RFC 6455 handshake + frame codec |
+| RAG retrieval | `internal/ai/memory.go` | TF-IDF + cosine similarity, no vector DB |
+
+## Install
+
+```bash
+go install github.com/mightbeanshuu/limitplane/cmd/limitplane@latest
+```
+
+Or build both binaries from a clone:
+
+```bash
+go build ./cmd/gateway     # the demo gateway + dashboard
+go build ./cmd/limitplane  # the reverse proxy
 ```
 
 ## Attach to ANY site (proxy mode — one command, no code changes)
 
-Your site can be Python, PHP, Rails, static files, anything. LimitPlane runs
-as a tiny gateway in front of it; blocked requests never reach your servers.
+Your site can be Python, PHP, Rails, static files, anything. LimitPlane runs in
+front of it; blocked requests never reach your servers.
 
 ```bash
-npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080
+limitplane --upstream http://localhost:8080
 ```
 
-That's it — every visitor now gets 60 requests/minute (keyed by IP). Tune it
-with flags, no config file needed:
+Every visitor now gets 60 requests/minute, keyed by IP. Tune with flags:
 
 ```bash
-npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080 \
+limitplane --upstream http://localhost:8080 \
   --rpm 120 --heavy /api/ai-scan,/api/generate   # heavy routes cost 5 tokens
 ```
 
-For the full multi-tenant story (tiers, API keys, per-customer budgets),
-use a config file instead:
+For the full multi-tenant story (tiers, API keys, per-customer budgets), use a
+config file:
 
 ```bash
-git clone https://github.com/mightbeanshuu/LimitPlane && cd LimitPlane
-cp limitplane.config.example.json limitplane.config.json   # point "upstream" at your site
-node bin/limitplane.js --config limitplane.config.json
-# LimitPlane proxy on http://localhost:3000 → protecting http://localhost:8080
+cp limitplane.config.example.json limitplane.config.json
+limitplane --config limitplane.config.json
 ```
 
-With `adminKey` set in the config, `GET /_limitplane/audit` (header
-`x-limitplane-admin`) shows the last 50 allow/block decisions.
+With `adminKey` set, `GET /_limitplane/audit` (header `x-limitplane-admin`)
+shows the last 50 decisions, and `/_limitplane/dashboard` serves the UI.
 
-## Add it to a Node site (middleware mode — the whole install)
+## Add it to a Go service (middleware mode)
 
-```bash
-npm install github:mightbeanshuu/LimitPlane
+```go
+import (
+    "github.com/mightbeanshuu/limitplane/internal/gateway"
+    "github.com/mightbeanshuu/limitplane/internal/policy"
+)
+
+quota := func(v float64) *float64 { return &v }
+
+pol, _ := policy.New(
+    map[string]*policy.Tier{
+        "free": {Capacity: 10, RefillPerSecond: 1, MonthlyQuota: quota(1_000)},
+        "pro":  {Capacity: 50, RefillPerSecond: 5, MonthlyQuota: quota(50_000)},
+    },
+    map[string]policy.Route{
+        "/v1/scan": {CostClass: "heavy"}, // AI inference: 5 tokens
+        "*":        {CostClass: "light"}, // everything else: 1 token
+    },
+    map[string]policy.Tenant{
+        "customer-api-key": {TenantID: "acme", Tier: "pro"},
+    },
+)
+
+gw := gateway.New(gateway.Config{Policy: pol})
+http.ListenAndServe(":8080", gw.Middleware(yourHandler))
 ```
 
-```js
-import { createLimitPlane } from "limitplane";
+The decision rides the request context, so a downstream handler can read what
+the layer already decided rather than metering the request twice:
 
-const lp = createLimitPlane({
-  policy: {
-    tiers: {
-      free: { capacity: 10, refillPerSecond: 1 },
-      pro:  { capacity: 50, refillPerSecond: 5 },
-    },
-    routes: {
-      "/v1/scan": { costClass: "heavy" },   // AI inference: 5 tokens
-      "*":        { costClass: "light" },   // everything else: 1 token
-    },
-    tenants: {
-      "customer-api-key": { tenantId: "acme", tier: "pro" },
-    },
-  },
-});
-
-// Express / connect / most Node frameworks:
-app.use(lp.middleware);
-
-// Plain node:http (see src/server.js for the full demo):
-const decision = await lp.middleware(req, res);
-if (!decision.allowed) return; // 429 already sent
+```go
+d, _ := gateway.DecisionFrom(r.Context())
 ```
 
-Unknown API keys aren't rejected — they become anonymous free-tier tenants
+Unknown API keys are not rejected — they become anonymous free-tier tenants
 keyed by IP, so strangers are limited too, each in their own bucket.
 
 ## Try the demo
 
 ```bash
-node src/server.js
+go run ./cmd/gateway     # then open http://localhost:3000/dashboard
 ```
 
 ```bash
 # Free tier holds 10 tokens; an NSFW scan costs 5 → exactly 2 scans, then 429:
 curl -s -X POST localhost:3000/v1/demo/nsfw-check \
-  -H "x-api-key: demo-free-key" -H "content-type: application/json" \
-  -d '{"text":"some page text to classify"}'
+  -H "content-type: application/json" -d '{"text":"some page text"}'
 # → { "label": "safe", "confidence": 0.02, "model": "stub-keyword-v0" }
 # 3rd call → HTTP 429, Retry-After: 5, and a message that explains itself.
 
-curl -s localhost:3000/v1/admin/audit   # the decision diary
+curl -s localhost:3000/v1/admin/audit   # the decision diary (needs a JWT)
 ```
 
-The NSFW classifier is a **deterministic keyword stub** (`src/demo/nsfwStub.js`)
-— it exists so the demo has a realistically-shaped expensive AI endpoint to
-protect. Swapping in a real model is a one-function change; the gateway only
-knows the route is "heavy".
+The NSFW classifier is a **deterministic keyword stub** (`internal/demo`) — it
+exists so the demo has a realistically-shaped expensive endpoint to protect.
+Swapping in a real model is a one-function change; the gateway only knows the
+route is "heavy".
 
 ## Monthly plans + Stripe billing
 
-LimitPlane runs TWO meters per request, in order:
+Two meters per request, in this order:
 
-1. **Monthly plan meter** (`monthlyQuotaLimiter.js`) — "does your plan have
-   units left this month?" Hard cap, calendar-month window (UTC), resets
-   automatically on the 1st because the month id changes. Protects the
-   customer's wallet: a runaway script can never generate a surprise bill.
-2. **Burst bucket** (`tokenBucketLimiter.js`) — "are you going too fast right
-   now?" Protects your servers. A request the plan rejected never drains
-   burst tokens.
+1. **Monthly plan meter** — "does your plan have units left this month?" A hard
+   cap on a UTC calendar-month window that resets on the 1st with no cron job,
+   because the month id simply changes. Protects the customer's wallet: a
+   runaway script can never produce a surprise bill.
+2. **Burst bucket** — "are you going too fast right now?" Protects your servers.
 
-Cost classes apply to both: 1 light request = 1 unit, 1 heavy AI call = 5.
-Tiers opt in by setting `monthlyQuota`; without it, only burst applies.
-
-### The billing automation loop
+Monthly is asked first, because there is no point rationing the speed of
+requests the plan cannot pay for at all.
 
 ```
 customer clicks upgrade ─▶ Stripe Checkout (hosted; you never see cards)
                                 │ payment succeeds
                                 ▼
         Stripe signs + POSTs /v1/billing/webhook
-                                │ HMAC signature verified (node:crypto, no SDK)
+                                │ HMAC signature verified, before parsing
                                 ▼
-         tenant's tier flips in the TenantStore
+         the tenant's tier flips in the TenantStore
                                 ▼
    the very next request is limited under the new plan — no restart.
-   Cancellations & failed payments flow back the same way → auto-downgrade.
+   Cancellations and failed payments flow back the same way.
 ```
 
-Run it live:
-
-```bash
-STRIPE_SECRET_KEY=sk_test_... STRIPE_WEBHOOK_SECRET=whsec_... \
-STRIPE_PRICE_PRO=price_... node src/server.js
-```
-
-Demo the loop with no Stripe account (endpoint auto-disables in live mode):
+Demo the whole loop with no Stripe account (the endpoint auto-disables the
+moment real Stripe is configured, because in production only a signed webhook
+may change what somebody pays for):
 
 ```bash
 curl -s localhost:3000/v1/billing/plans
 curl -s -X POST localhost:3000/v1/billing/simulate \
-  -H "content-type: application/json" -d '{"apiKey":"demo-free-key","plan":"pro"}'
-curl -s localhost:3000/v1/demo/ping -H "x-api-key: demo-free-key"   # now pro, 50k units
+  -H "authorization: Bearer $TOKEN" -H "content-type: application/json" \
+  -d '{"apiKey":"<key>","plan":"pro"}'
 ```
 
-The Stripe integration (`src/billing/stripeBilling.js`) is deliberately
-zero-SDK: raw HTTPS + form encoding for Checkout, one HMAC for webhook
-signatures. Read it once and Stripe stops being magic. The pricing model is
-the "Zapier pattern" from Stripe's own SaaS guidance: flat monthly price,
-hard monthly cap, upgrade prompt at the cap. Stripe's newer Meters API
-(pay-per-use invoicing) is the natural later evolution.
+## The autopilot
 
-## Live dashboard
-
-```bash
-npm start          # then open http://localhost:3000/dashboard
-```
-
-Glass-and-neumorphism control room for the gateway: KPI tiles, a 60-second
-traffic chart, one card per connected site (tier chip, monthly plan meter,
-live cooldown badge), the decision feed, and the autopilot's actions with
-their AI notes. Poll-based (1.5s), single self-contained HTML file
-(`src/dashboard/dashboard.html`), no build step. Built-in traffic buttons
-let you demo everything: light pings, heavy scans, a retry-storm that gets
-auto-banned, and the free→pro upgrade flowing through the billing simulate
-endpoint. The proxy serves the same file at `/_limitplane/dashboard`, with
-data guarded by your `adminKey`.
-
-## Auth: JWT with roles, from scratch
-
-`src/auth/jwt.js` is a zero-dependency HS256 JWT: sign + verify are one HMAC
-each (the same trick as the Stripe webhook check), with expiry and a
-timing-safe compare. `POST /v1/auth/login` exchanges credentials for a token;
-every admin endpoint then checks `Authorization: Bearer <jwt>`.
-
-Roles: **admin** can do everything (billing simulate, bans, tier edits);
-**viewer** is read-only (stats, audit, automations, explain). A viewer token
-on a mutation gets a 401 before any work happens. Demo users
-`demo@limitplane.dev`/`demo123` (admin) and `viewer@limitplane.dev`/`viewer123`
-(viewer); override with `DASH_ADMIN_PASSWORD` / `DASH_VIEWER_PASSWORD`, and
-set `JWT_SECRET` in prod (default is random per boot, so restarts log
-everyone out — the right default for a demo).
-
-## Real-time: SSE push + live management
-
-The dashboard doesn't poll anymore. `GET /v1/admin/live?token=<jwt>` is a
-Server-Sent Events stream: every decision and autopilot action is pushed the
-millisecond it happens, plus a stats snapshot every 2s; EventSource
-reconnects by itself. And management is live too (admin role):
-
-| Endpoint | Does |
-|---|---|
-| `POST /v1/admin/ban` `{tenantId, seconds}` | manual cooldown, effective on the next request |
-| `POST /v1/admin/unban` `{tenantId}` | lift a cooldown now |
-| `POST /v1/admin/tenants` `{tenantId, tier}` | re-tier a customer live (manual Stripe flow) |
-| `POST /v1/admin/tiers` `{tier, capacity?, refillPerSecond?, monthlyQuota?}` | edit plan limits while the gateway runs |
-
-Tier edits mutate the same policy object the engine reads, so the very next
-request uses the new numbers — no restart, and the dashboard shows it within
-a heartbeat. Tenant cards grow ban/unban buttons and a tier dropdown when an
-admin is signed in; viewers see the same data with no controls.
-
-## Automations: the autopilot
-
-`src/gateway/automations.js` watches the decision stream and acts with no
-human in the loop:
+`internal/automations` watches the decision stream and acts with no human in
+the loop:
 
 | Rule | Trigger | Action |
 |---|---|---|
-| Quota alert | tenant crosses 80% of their monthly plan | alert (once/month) |
-| Upgrade nudge | tenant slams into the monthly cap 3 times | "they need a bigger plan" alert (once/month) |
+| Quota alert | tenant crosses 80% of their monthly plan | alert, once per month |
+| Upgrade nudge | tenant slams the monthly cap 3 times | "they need a bigger plan" |
 | Storm cooldown | 10 burst-blocks within 60s from one client | auto-ban 5 min, auto-unban after |
+| AI review | periodic model review of repeat-blockers | may ban what the rules missed |
 
-The gateway consults `banRemainingMs()` before spending any meter, so a
-banned client gets an instant 429 (`temporarily_blocked`) without touching
-tokens. Every action is logged (`GET /v1/admin/automations`) and optionally
-POSTed to `ALERT_WEBHOOK_URL` (Slack/Discord-compatible: `text` field).
+The AI reviewer's **guardrails matter more than the model**: it can only act on
+clients already blocking heavily, it must answer in strict JSON, its picks are
+intersected with that vetted set (so a hallucinated or injected tenant id is
+discarded), the ban length is clamped to 1–60 minutes, and every AI ban is
+logged as `ai_ban` so model decisions stay distinguishable from rule decisions.
 
-**AI incident notes.** Set `GROQ_API_KEY` (run `node --env-file=.env
-src/server.js`) and every autopilot action gets an LLM-written note based on
-the real audit facts — "looks like a retry-loop bug, tell them to add
-backoff" instead of "blocked: over limit". `GET /v1/admin/explain` does the
-same on demand for the latest blocked request. Deterministic-first, per
-house rules: no key (or a dead network) falls back to honest template notes,
-and an explanation can never break a request. The model sees audit metadata
-only — never request bodies, never secrets. See `.env.example`.
+Everything is deterministic-first: with no `GROQ_API_KEY` the notes fall back to
+honest templates and nothing breaks. The model only ever sees audit metadata —
+never request bodies, never secrets.
 
-**Hot config reload (proxy).** In config-file mode, `bin/limitplane.js`
-watches the file and swaps in edited policy live (bad JSON keeps the old
-policy and says so). Bans survive reloads; meters reset.
+## Behavioural fingerprinting
 
-## How to read this codebase (start here when you come back later)
+Clients leave signatures in data the gateway already collects, with no cookies
+and no client-side JS: timing rhythm (coefficient of variation of inter-arrival
+gaps — humans are irregular, scripts are metronomes), path entropy, whether
+they back off after a 429, and their block ratio. From those, each client is
+classified `human` / `ai_agent` / `crawler` / `retry_bug` and given an adaptive
+**lane**: the same tier limits, scaled to behaviour.
 
-Read in this order — each file is short and comments explain every step:
+When a lane moves the limit off the published plan value, the response says so
+rather than leaving the customer to wonder:
 
-| Order | File | What it is |
+```
+X-RateLimit-Limit         13
+X-LimitPlane-Lane         human
+X-LimitPlane-Tier-Limit   10
+```
+
+## Real-time + live management
+
+`GET /v1/admin/live?token=<jwt>` is a Server-Sent Events stream; `/ws` is a
+WebSocket. Both carry the same events, because a proxy that mangles upgrades
+should not cost you the dashboard. Each subscriber gets a buffered channel and
+its own writer goroutine, and a dashboard too slow to keep up is dropped rather
+than allowed to stall the broadcast for everyone else.
+
+| Endpoint | Does |
+|---|---|
+| `POST /v1/admin/ban` `{tenantId, seconds}` | manual cooldown, effective next request |
+| `POST /v1/admin/unban` `{tenantId}` | lift a cooldown now |
+| `POST /v1/admin/tenants` `{tenantId, tier}` | re-tier a customer live |
+| `POST /v1/admin/tiers` `{tier, capacity?, ...}` | edit plan limits while running |
+
+Tier edits mutate the policy the engine reads, so the next request already uses
+the new numbers.
+
+## How to read this codebase
+
+Each package is short and its doc comment explains why it exists.
+
+| Order | Package | What it is |
 |---|---|---|
-| 1 | `src/algorithms/tokenBucketLimiter.js` | The muscle: a coin jar per key, refills over time |
-| 2 | `src/gateway/policyEngine.js` | The brain: who + what → key, budget, price |
-| 3 | `src/gateway/limitPlane.js` | The layer: glues brain to muscle, sets headers, sends 429s |
-| 4 | `src/gateway/auditLog.js` | The diary: every decision written down with facts |
-| 5 | `src/algorithms/monthlyQuotaLimiter.js` | The phone plan: hard monthly cap, auto-resets on the 1st |
-| 6 | `src/billing/stripeBilling.js` | Plans, Stripe checkout, webhook automation (zero-SDK) |
-| 7 | `src/server.js` | A real site wearing the layer + billing routes |
+| 1 | `internal/limiter` | The muscles: 8 algorithms, sharded, race-safe |
+| 2 | `internal/policy` | The brain: who + what → key, budget, price |
+| 3 | `internal/gateway` | The layer: brain to muscle, headers, 429s, context |
+| 4 | `internal/audit` | The diary: every decision, allowed or blocked |
+| 5 | `internal/automations` | The autopilot: rules + guarded LLM reviewer |
+| 6 | `internal/ai` | Explainer, real token metering, hand-built TF-IDF RAG |
+| 7 | `internal/billing` | Plans, Stripe checkout, webhook automation |
+| 8 | `internal/server` | The HTTP surface wiring it all together |
 
-Six more limiter algorithms live in `src/algorithms/` (fixed window, sliding
-window log/counter, leaky bucket, and two distributed Redis variants — the Lua
-one does INCR+EXPIRE atomically in one round trip). Any of them can be swapped
-into `createLimitPlane({ limiter })`; use a Redis limiter when you run more
-than one server so all replicas share the same buckets.
+Any limiter can be swapped in via `gateway.Config{Limiter: ...}`. Use a Redis
+variant when you run more than one replica so every instance shares one bucket
+— the in-memory limiters are correct per process, not per cluster.
 
-## Tests & benchmark
+## Tests
 
 ```bash
-npm test                  # unit: all algorithms + policy engine + middleware
-npm run test:integration  # needs a local redis-server
-node bench.js             # measured 181k limiter checks/sec (50 tenants, conc 100)
+go test -race ./...                              # unit + HTTP integration
+go test -bench=. -benchtime=2s ./internal/limiter/
+go test -cover ./internal/...
 ```
+
+214 tests / 382 cases plus end-to-end integration tests that drive the real
+object graph over real HTTP. **No test sleeps**: every clock is injected and
+driven by hand, so nothing is timing-dependent in CI.
+
+Coverage: `policy`, `audit`, `stats`, `fingerprint`, `useragent`, `authjwt` at
+100%; `automations` 99%, `ai` 98%, `orgstore` 96%, `billing` 93%, `wshub` 92%,
+`limiter` 90%.
+
+CI runs gofmt, vet, build, the race suite with coverage, a dependency-count
+gate, a smoke test against the shipped binary, and a Docker build.
+
+## Deploy
+
+```bash
+docker build -t limitplane .   # 6.8MB static binary in a scratch image
+docker run -p 3000:3000 -e JWT_SECRET=... limitplane
+```
+
+The dashboard is compiled in with `go:embed`, so the deployed artefact is one
+file with nothing beside it that can go missing. `render.yaml` is a Render
+blueprint for the same image.
 
 ## Design notes
 
-- **Injectable clocks everywhere** — every limiter and the audit log accept
-  `now`, so tests fast-forward time instead of sleeping.
-- **Fail loudly** — unknown tiers/cost classes throw at config time; a typo in
-  the policy should explode in dev, never silently mis-limit in prod.
-- **Deterministic-first AI seams** — cost classification and the NSFW stub are
-  plain functions behind stable interfaces; LLM-backed versions (the planned
-  Policy Copilot) are pure swap-ins, nothing breaks without an API key.
-- **Heavy can't starve light** — buckets are per-route, and within a route
-  heavy requests pay 5×, so cheap traffic keeps flowing while expensive AI
-  traffic hits its ceiling first.
+- **Injectable clocks everywhere** — every limiter, the audit log, stats and the
+  autopilot accept `now`, so tests fast-forward instead of sleeping.
+- **Fail open on config, closed on traffic** — an unknown tier or cost class is
+  a config bug, so the gateway degrades to *not limiting* rather than blocking
+  everything and taking the protected site down with it.
+- **Deterministic-first AI seams** — every LLM feature has a plain-code fallback
+  and the model never makes the final decision; it advises, rules decide.
+- **Heavy can't starve light** — buckets are per-route, and within a route heavy
+  requests pay 5×, so cheap traffic keeps flowing while expensive AI traffic
+  hits its ceiling first.
+- **Bounded memory** — keys include `anon:<ip>`, so the key space is unbounded
+  and attacker-controlled. A janitor evicts jars that are idle *and* would have
+  refilled to full, which makes eviction unobservable to the client and
+  incapable of refunding anyone budget.
+
+> `site/` is the marketing page deployed on Vercel and still contains one JS
+> serverless function (`site/api/explain.js`), because Vercel's runtime serves
+> it. The gateway itself — everything in `cmd/` and `internal/` — is pure Go.
