@@ -410,7 +410,6 @@ func TestForgetRemovesADisconnectedSite(t *testing.T) {
 // ---- the aliasing bug ------------------------------------------------------
 
 func TestSnapshotMustNotAliasTheLiveMonthlyMeter(t *testing.T) {
-	t.Skip("BUG: stats.Snapshot copies each TenantCard by value, but TenantCard.Monthly is a *Monthly, so the returned card still points at the live meter (same for Org/Fingerprint). The code comment on that line claims 'the caller must not touch live state', yet a caller writing through snapshot.Tenants[i].Monthly corrupts the dashboard for everyone. Fix: deep-copy Monthly (and the *string fields) when building cards.")
 
 	c := newTick(t0)
 	s := stats.New(c.fn())

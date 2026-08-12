@@ -283,7 +283,12 @@ func (a *Automations) OnDecision(e audit.Event) {
 		fresh = append(fresh, e.At)
 		a.stormLog[e.TenantID] = fresh
 
-		_, alreadyBanned := a.bans[e.TenantID]
+		// Ask whether a ban is still LIVE, not merely whether the map has an
+		// entry. Expired entries are only reaped lazily by BanRemainingMs, so a
+		// membership test would let one lapsed cooldown immunise a client from
+		// ever being auto-banned again.
+		until, has := a.bans[e.TenantID]
+		alreadyBanned := has && until > a.cfg.Now()
 		trip := len(fresh) >= a.cfg.StormThreshold && !alreadyBanned
 		if trip {
 			a.bans[e.TenantID] = a.cfg.Now() + a.cfg.CooldownMs

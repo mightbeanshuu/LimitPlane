@@ -159,7 +159,23 @@ func (s *Stats) Snapshot(banCheck func(string) int64) Snapshot {
 
 	cards := make([]TenantCard, 0, len(s.perTenant))
 	for _, t := range s.perTenant {
-		cards = append(cards, *t) // copy out; the caller must not touch live state
+		// `*t` is only a SHALLOW copy: Monthly/Org/Fingerprint are pointers that
+		// would still address live state, so a caller decorating the snapshot
+		// (which handleStats does) would corrupt the dashboard's own counters.
+		card := *t
+		if t.Monthly != nil {
+			m := *t.Monthly
+			card.Monthly = &m
+		}
+		if t.Org != nil {
+			o := *t.Org
+			card.Org = &o
+		}
+		if t.Fingerprint != nil {
+			f := *t.Fingerprint
+			card.Fingerprint = &f
+		}
+		cards = append(cards, card)
 	}
 	sort.Slice(cards, func(i, j int) bool { return cards[i].LastSeen > cards[j].LastSeen })
 	if len(cards) > 24 {

@@ -162,7 +162,20 @@ func (p *Policy) HasTier(name string) bool {
 	return ok
 }
 
-// TierSnapshot returns a copy — callers must never mutate live policy directly.
+// cloneTier deep-copies a tier. `*t` alone is NOT enough: MonthlyQuota is a
+// *float64, so a shallow copy still points into the live rulebook — a caller
+// writing through their "snapshot" would silently re-price every tenant on that
+// tier, and would race Resolve's read of the same word.
+func cloneTier(t *Tier) Tier {
+	out := *t
+	if t.MonthlyQuota != nil {
+		q := *t.MonthlyQuota
+		out.MonthlyQuota = &q
+	}
+	return out
+}
+
+// TierSnapshot returns a deep copy — callers can never mutate live policy.
 func (p *Policy) TierSnapshot(name string) (Tier, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -170,7 +183,7 @@ func (p *Policy) TierSnapshot(name string) (Tier, bool) {
 	if !ok {
 		return Tier{}, false
 	}
-	return *t, true
+	return cloneTier(t), true
 }
 
 // UpdateTier edits plan limits while the gateway runs; the next request already
@@ -192,7 +205,7 @@ func (p *Policy) UpdateTier(name string, capacity, refill, monthly *float64) (Ti
 		q := *monthly
 		t.MonthlyQuota = &q
 	}
-	return *t, true
+	return cloneTier(t), true
 }
 
 func (p *Policy) Tiers() map[string]Tier {
@@ -200,7 +213,7 @@ func (p *Policy) Tiers() map[string]Tier {
 	defer p.mu.RUnlock()
 	out := make(map[string]Tier, len(p.tiers))
 	for k, v := range p.tiers {
-		out[k] = *v
+		out[k] = cloneTier(v)
 	}
 	return out
 }

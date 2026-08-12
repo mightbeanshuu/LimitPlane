@@ -247,7 +247,6 @@ func TestMatchingIsCaseInsensitive(t *testing.T) {
 // ---- the substring bug -----------------------------------------------------
 
 func TestChromeOSDetectionMustNotMatchTheWordMicrosoft(t *testing.T) {
-	t.Skip("BUG: the ChromeOS test is a bare substring search for \"cros\", and \"miCROSoft\" contains it. Any UA carrying the word Microsoft without an explicit \"Windows NT\" token is reported as ChromeOS — e.g. the real Windows WebDAV client \"Microsoft-WebDAV-MiniRedir/10.0.19045\" and Office's own UAs. Inherited from the Node original, which used the equally loose /CrOS/i. Fix: match \"cros \" / \"(x11; cros\" or require a word boundary.")
 
 	cases := []struct{ name, ua string }{
 		{"the Windows WebDAV client", "Microsoft-WebDAV-MiniRedir/10.0.19045"},

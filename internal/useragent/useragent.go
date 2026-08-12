@@ -43,7 +43,11 @@ func Parse(ua string) Parsed {
 		os = "macOS"
 	case contains(s, "windows nt"):
 		os = "Windows"
-	case contains(s, "cros"):
+	// "cros" as a bare substring also matches "microsoft" — real UA strings such
+	// as Microsoft-WebDAV-MiniRedir were being reported as ChromeOS. Chrome OS
+	// always spells it "CrOS " followed by the architecture, so require the
+	// token boundary.
+	case contains(s, "cros "), strings.HasSuffix(s, "cros"), contains(s, "cros;"), contains(s, "cros)"):
 		os = "ChromeOS"
 	case contains(s, "linux"):
 		os = "Linux"

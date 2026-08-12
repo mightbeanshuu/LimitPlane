@@ -394,7 +394,6 @@ func TestAPIKeyForFindsTheKeyBehindATenant(t *testing.T) {
 // ---- the aliasing bug ------------------------------------------------------
 
 func TestTierSnapshotMustNotAliasTheLiveMonthlyQuota(t *testing.T) {
-	t.Skip("BUG: policy.TierSnapshot/Tiers return a SHALLOW copy of Tier, so the returned *float64 MonthlyQuota still points into live policy state. A caller that writes through it silently re-prices every tenant on that tier (and races Resolve's read of the same word). Fix: deep-copy MonthlyQuota in TierSnapshot and Tiers, as Resolve already does.")
 
 	p := newTestPolicy(t)
 

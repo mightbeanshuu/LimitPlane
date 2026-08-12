@@ -790,7 +790,6 @@ func TestADeadWebhookNeverBreaksTheRule(t *testing.T) {
 // ---- the stale-ban bug -----------------------------------------------------
 
 func TestAFreshStormMustReBanAfterAnOldCooldownExpired(t *testing.T) {
-	t.Skip("BUG: the storm rule tests `_, ok := a.bans[tenantID]` (map membership) instead of whether the ban is still LIVE. An expired entry that nothing has reaped yet permanently suppresses re-banning, so a client that storms again after its cooldown lapsed is never re-banned. Entries are only reaped by BanRemainingMs, which masks this on the real request path but not for any other caller (RunAIReview, WS pushes, tests). Fix: in OnDecision compare a.bans[id] against a.cfg.Now() rather than testing for presence.")
 
 	rec := &recorder{}
 	c := newTick(june10)
