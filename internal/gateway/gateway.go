@@ -37,15 +37,24 @@ import (
 
 // Decision is the full verdict for one request.
 type Decision struct {
-	Allowed      bool
-	Reason       string // "" | "burst" | "monthly_quota" | "auto_cooldown"
-	Remaining    int
-	Limit        float64
+	Allowed   bool
+	Reason    string // "" | "burst" | "monthly_quota" | "auto_cooldown"
+	Remaining int
+	// Limit is the EFFECTIVE capacity actually enforced for this request, which
+	// is the tier capacity after the behavioural lane multiplier. Reporting the
+	// raw tier capacity here (as the Node original did) lets Remaining exceed
+	// Limit whenever a client is in a widened lane — nonsense to any client
+	// parsing these headers, and the kind of thing that silently breaks an SDK's
+	// backoff maths.
+	Limit float64
+	// TierLimit is the unadjusted plan capacity, kept for the 429 message.
+	TierLimit    float64
 	Cost         float64
 	CostClass    string
 	RetryAfterMs int64
 	TenantID     string
 	Tier         string
+	Lane         string // behavioural class that scaled the limit, if any
 	Monthly      *limiter.MonthlyDecision
 	MonthlyQuota *float64
 	Err          error
@@ -124,7 +133,7 @@ func (g *Gateway) Check(a CheckArgs) Decision {
 		}
 		return Decision{
 			Allowed: false, Reason: "auto_cooldown", Remaining: 0,
-			Limit: plan.Capacity, Cost: plan.Cost, CostClass: plan.CostClass,
+			Limit: plan.Capacity, TierLimit: plan.Capacity, Cost: plan.Cost, CostClass: plan.CostClass,
 			RetryAfterMs: banMs, TenantID: tenant.TenantID, Tier: tenant.Tier,
 			MonthlyQuota: plan.MonthlyQuota,
 		}
@@ -203,7 +212,7 @@ func (g *Gateway) Check(a CheckArgs) Decision {
 
 	return Decision{
 		Allowed: allowed, Reason: reason, Remaining: result.Remaining,
-		Limit: plan.Capacity, Cost: plan.Cost, CostClass: plan.CostClass,
+		Limit: capacity, TierLimit: plan.Capacity, Lane: laneLabel, Cost: plan.Cost, CostClass: plan.CostClass,
 		RetryAfterMs: retryAfterMs, TenantID: tenant.TenantID, Tier: tenant.Tier,
 		Monthly: month, MonthlyQuota: plan.MonthlyQuota,
 	}
@@ -241,6 +250,12 @@ func (g *Gateway) Apply(w http.ResponseWriter, r *http.Request) Decision {
 	h.Set("X-RateLimit-Limit", strconv.FormatFloat(d.Limit, 'f', -1, 64))
 	h.Set("X-RateLimit-Remaining", strconv.Itoa(max(d.Remaining, 0)))
 	h.Set("X-LimitPlane-Cost-Class", d.CostClass)
+	// Say WHY the limit is what it is when the lane moved it off the tier value.
+	// An unexplained limit that differs from the published plan looks like a bug.
+	if d.Lane != "" && d.Limit != d.TierLimit {
+		h.Set("X-LimitPlane-Lane", d.Lane)
+		h.Set("X-LimitPlane-Tier-Limit", strconv.FormatFloat(d.TierLimit, 'f', -1, 64))
+	}
 	if d.Monthly != nil && d.MonthlyQuota != nil {
 		h.Set("X-Monthly-Limit", strconv.FormatFloat(*d.MonthlyQuota, 'f', -1, 64))
 		h.Set("X-Monthly-Remaining", strconv.FormatFloat(d.Monthly.Remaining, 'f', -1, 64))

@@ -1,7 +1,11 @@
 package limiter_test
 
 import (
+	"context"
+	"fmt"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/mightbeanshuu/limitplane/internal/limiter"
 )
@@ -173,4 +177,174 @@ func TestTokenBucketNilClockFallsBackToWallTime(t *testing.T) {
 	// Production wires no clock; that path must not panic or start empty.
 	b := limiter.NewTokenBucket(nil)
 	allow(t, b.Check(tb("k", 1, 0, 1)), "default (wall-clock) construction")
+}
+
+// ---------------------------------------------------------------------------
+// Sharding — an implementation detail that must be invisible in the answers.
+// ---------------------------------------------------------------------------
+
+func TestShardCountNeverChangesTheAdmissionDecisions(t *testing.T) {
+	// Striping the map across locks is a throughput optimisation. If it ever
+	// changes WHICH requests are admitted, it has broken the limiter.
+	shardCounts := []int{0, 1, 2, 3, 7, 8, 64} // 0 = auto, and deliberately non-powers of two
+	const keys = 40
+	const perKey = 6
+
+	var reference []bool
+	for _, shards := range shardCounts {
+		t.Run(fmt.Sprintf("shards=%d", shards), func(t *testing.T) {
+			b := limiter.NewTokenBucketSharded(newClock(0).fn(), shards)
+			var got []bool
+			for i := 0; i < perKey; i++ {
+				for k := 0; k < keys; k++ {
+					got = append(got, b.Check(tb(fmt.Sprintf("tenant-%d", k), 3, 0, 1)).Allowed)
+				}
+			}
+			if b.Len() != keys {
+				t.Fatalf("with %d shards the limiter tracks %d jars for %d keys — a key was hashed out of range or lost", shards, b.Len(), keys)
+			}
+			if reference == nil {
+				reference = got
+				return
+			}
+			for i := range got {
+				if got[i] != reference[i] {
+					t.Fatalf("with %d shards decision %d differs from the single-shard reference (%v vs %v) — sharding must not change who gets in",
+						shards, i, got[i], reference[i])
+				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The janitor — bounded memory, without ever handing out free budget.
+// ---------------------------------------------------------------------------
+
+func TestSweepEvictsOnlyJarsThatWouldHaveRefilledToFull(t *testing.T) {
+	c := newClock(0)
+	b := limiter.NewTokenBucket(c.fn())
+
+	// A jar that refills, so ten minutes of idleness would top it right up.
+	allow(t, b.Check(tb("refills", 10, 1, 1)), "seeding a refilling jar")
+	// A jar with no refill at all, drained to empty. It can NEVER be full again,
+	// so evicting it would silently hand its owner a whole fresh capacity.
+	allow(t, b.Check(tb("drained", 3, 0, 3)), "draining a jar that never refills")
+
+	c.set(600_000) // ten minutes later
+	allow(t, b.Check(tb("warm", 5, 0, 1)), "a jar touched just now")
+
+	if got := b.Len(); got != 3 {
+		t.Fatalf("expected 3 jars before the sweep, found %d", got)
+	}
+
+	freed := b.Sweep(5 * time.Minute)
+	if freed != 1 {
+		t.Fatalf("the sweep freed %d jars; only the idle jar that would be full again is safe to drop", freed)
+	}
+	if got := b.Len(); got != 2 {
+		t.Fatalf("%d jars survived the sweep, expected 2", got)
+	}
+	if !b.Check(tb("warm", 5, 0, 1)).Allowed {
+		t.Fatal("a jar touched moments ago was evicted; the idle cutoff is not being honoured")
+	}
+}
+
+func TestSweepNeverRefundsADrainedJar(t *testing.T) {
+	// This is the rate-limit bypass a naive cache eviction would create: drop a
+	// spent jar and its owner starts over with a full budget.
+	c := newClock(0)
+	b := limiter.NewTokenBucket(c.fn())
+
+	for i := 0; i < 3; i++ {
+		allow(t, b.Check(tb("abuser", 3, 0, 1)), "draining the jar")
+	}
+	deny(t, b.Check(tb("abuser", 3, 0, 1)), "the jar is spent")
+
+	c.set(365 * 24 * 60 * 60 * 1000) // a year of idleness
+	b.Sweep(time.Second)
+
+	deny(t, b.Check(tb("abuser", 3, 0, 1)), "a jar that can never refill must survive every sweep, or eviction becomes a rate-limit bypass")
+}
+
+func TestSweepOfAnEvictedJarIsInvisibleToTheClient(t *testing.T) {
+	// The eviction rule is "would this be full anyway?", so the client that owns
+	// an evicted jar must see exactly what it would have seen without the sweep.
+	c := newClock(0)
+	args := tb("k", 10, 1, 1)
+
+	withSweep := limiter.NewTokenBucket(c.fn())
+	withoutSweep := limiter.NewTokenBucket(c.fn())
+	for _, b := range []*limiter.TokenBucket{withSweep, withoutSweep} {
+		for i := 0; i < 10; i++ {
+			b.Check(args)
+		}
+	}
+
+	c.set(600_000)
+	if freed := withSweep.Sweep(time.Minute); freed != 1 {
+		t.Fatalf("the idle full jar was not swept (freed=%d)", freed)
+	}
+
+	a := withSweep.Check(args)
+	bDec := withoutSweep.Check(args)
+	if a.Allowed != bDec.Allowed || a.Remaining != bDec.Remaining {
+		t.Fatalf("after a sweep the client sees %+v but would have seen %+v — eviction must be unobservable", a, bDec)
+	}
+}
+
+func TestSweepOnAnEmptyLimiterIsANoOp(t *testing.T) {
+	b := limiter.NewTokenBucket(newClock(0).fn())
+	if freed := b.Sweep(time.Minute); freed != 0 {
+		t.Fatalf("sweeping a limiter with no jars freed %d of them", freed)
+	}
+}
+
+func TestALiveCapacityChangeShrinksAnOverfullJar(t *testing.T) {
+	// An operator downgrades a tier, or the behavioural classifier moves a
+	// client into a tighter lane. The jar must not keep holding the old, larger
+	// budget it was already carrying.
+	c := newClock(0)
+	b := limiter.NewTokenBucket(c.fn())
+
+	d := allow(t, b.Check(tb("k", 100, 0, 1)), "a request on the big tier")
+	wantRemaining(t, d, 99, "the big jar")
+
+	d = allow(t, b.Check(tb("k", 5, 0, 1)), "the next request after a downgrade to a capacity of 5")
+	wantRemaining(t, d, 4, "a downgraded jar must immediately be clamped to the new, smaller capacity")
+}
+
+func TestJanitorSweepsUntilItIsClosed(t *testing.T) {
+	c := newClock(0)
+	b := limiter.NewTokenBucket(c.fn())
+	defer b.Close()
+
+	allow(t, b.Check(tb("idle", 10, 1, 1)), "seeding a jar that will become sweepable")
+	c.set(600_000) // the limiter's own clock says the jar is long idle and refilled
+
+	// Only the janitor's TICK is wall-clock; what it decides to evict is driven
+	// entirely by the injected clock above, so this is a wait for a scheduled
+	// goroutine rather than a wait for a timing-dependent outcome.
+	b.StartJanitor(context.Background(), time.Millisecond, time.Minute)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for b.Len() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the janitor never swept: %d jars are still tracked, so the key space would grow without bound", b.Len())
+		}
+		runtime.Gosched()
+	}
+}
+
+func TestJanitorStopsWithItsContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already dead before the janitor starts
+
+	b := limiter.NewTokenBucket(newClock(0).fn())
+	b.StartJanitor(ctx, 0, 0) // zero intervals must fall back to the documented defaults
+	b.Close()
+	b.Close() // Close is documented as safe to call more than once
+	b.Close()
+
+	allow(t, b.Check(tb("k", 1, 0, 1)), "the limiter must still work after being closed")
 }

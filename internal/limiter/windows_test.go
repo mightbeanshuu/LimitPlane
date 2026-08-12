@@ -108,6 +108,17 @@ func TestFixedWindowBoundaryDoubleBurstIsAKnownWeakness(t *testing.T) {
 	}
 }
 
+func TestFixedWindowZeroCostIsTreatedAsOne(t *testing.T) {
+	// Cost defaults to 1 so a caller that forgets to price a route cannot
+	// accidentally create an unmetered endpoint.
+	c := newClock(0)
+	f := limiter.NewFixedWindow(c.fn())
+	free := win("k", 1, 1000, 0)
+
+	wantRemaining(t, allow(t, f.Check(free), "unpriced request"), 0, "an unpriced request must still consume a slot")
+	deny(t, f.Check(free), "second unpriced request against a limit of 1")
+}
+
 func TestFixedWindowKeysAreIndependent(t *testing.T) {
 	c := newClock(0)
 	f := limiter.NewFixedWindow(c.fn())

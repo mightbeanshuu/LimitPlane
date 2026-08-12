@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -766,4 +767,32 @@ func stripeSignature(body []byte, secret string, ts int64) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	fmt.Fprintf(mac, "%d.%s", ts, body)
 	return fmt.Sprintf("t=%d,v1=%s", ts, hex.EncodeToString(mac.Sum(nil)))
+}
+
+// A client must never be told it has more budget left than its stated limit.
+// The behavioural lane can widen the real jar above the tier capacity, so the
+// headers have to report the ENFORCED limit, not the published plan number —
+// otherwise an SDK computing "remaining/limit" sees a ratio above 1.
+func TestRateLimitHeadersAreSelfConsistent(t *testing.T) {
+	h := newHarness(t)
+	tok := h.token(adminEmail, adminPass)
+	key := h.connectSite(tok, "headers.example", "free")
+
+	// Enough traffic for the classifier to leave "warming" and pick a lane.
+	for i := 0; i < 40; i++ {
+		h.clock.advance(400 * time.Millisecond)
+		r := h.do(http.MethodGet, "/v1/demo/ping", nil, map[string]string{"X-API-Key": key})
+
+		limit, err := strconv.ParseFloat(r.header.Get("X-RateLimit-Limit"), 64)
+		if err != nil {
+			t.Fatalf("X-RateLimit-Limit was not a number: %q", r.header.Get("X-RateLimit-Limit"))
+		}
+		remaining, err := strconv.ParseFloat(r.header.Get("X-RateLimit-Remaining"), 64)
+		if err != nil {
+			t.Fatalf("X-RateLimit-Remaining was not a number: %q", r.header.Get("X-RateLimit-Remaining"))
+		}
+		if remaining > limit {
+			t.Fatalf("request %d reported remaining=%v with limit=%v — a client can never have more budget left than its limit", i, remaining, limit)
+		}
+	}
 }

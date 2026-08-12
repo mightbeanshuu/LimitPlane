@@ -738,6 +738,37 @@ func TestWebhookFallsBackToTheRuleMessageWithNoExplainer(t *testing.T) {
 	}
 }
 
+func TestAnUnparseableWebhookURLAndAMissingEventSourceAreSurvivable(t *testing.T) {
+	// Two ways an operator can misconfigure the alert path: a URL that is not a
+	// URL, and an explainer wired with no way to fetch audit context. Neither
+	// may panic the notify goroutine or lose the action.
+	exp := &fakeExplainer{note: "note", seen: make(chan int, 4)}
+	a := automations.New(automations.Config{
+		Now:             newTick(june10).fn(),
+		AlertWebhookURL: "http://%zz-not-a-url",
+		Explainer:       exp,
+		// GetRecentEvents deliberately omitted.
+	})
+
+	a.Ban("acme", 5_000, "anshu")
+
+	select {
+	case n := <-exp.seen:
+		if n != 0 {
+			t.Fatalf("with no event source wired the explainer was handed %d events; it must get an empty slice, not a panic", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the notify goroutine never reached the explainer")
+	}
+
+	if a.BanRemainingMs("acme") <= 0 {
+		t.Fatal("a malformed alert URL prevented the ban from taking effect")
+	}
+	if got := a.State().TotalActions; got != 1 {
+		t.Fatalf("the action log holds %d entries after one ban with a broken alert URL", got)
+	}
+}
+
 func TestADeadWebhookNeverBreaksTheRule(t *testing.T) {
 	// A notification is a side effect; a dead endpoint must not take down the
 	// request that triggered it, nor stop the ban from being applied.
