@@ -62,7 +62,7 @@ type Decision struct {
 
 type Config struct {
 	Policy       *policy.Policy
-	Limiter      *limiter.TokenBucket
+	Limiter      limiter.BurstLimiter
 	Monthly      *limiter.MonthlyQuota
 	Audit        *audit.Log
 	Automations  *automations.Automations
@@ -162,9 +162,22 @@ func (g *Gateway) Check(a CheckArgs) Decision {
 	// ---- step 3b: the burst limiter, only if the plan said yes ----
 	result := limiter.Decision{}
 	if month == nil || month.Allowed {
-		result = g.cfg.Limiter.Check(limiter.TokenBucketArgs{
+		var err error
+		result, err = g.cfg.Limiter.CheckBurst(limiter.BurstArgs{
 			Key: plan.Key, Capacity: capacity, RefillRatePerMs: refill, Cost: plan.Cost,
 		})
+		if err != nil {
+			// A distributed limiter that is unreachable must not take the
+			// protected site down with it. Fail OPEN and surface the error: an
+			// outage in the rate limiter should cost you rate limiting, not
+			// availability.
+			return Decision{
+				Allowed: true, Remaining: 0, Limit: capacity, TierLimit: plan.Capacity,
+				Lane: laneLabel, Cost: plan.Cost, CostClass: plan.CostClass,
+				TenantID: tenant.TenantID, Tier: tenant.Tier, MonthlyQuota: plan.MonthlyQuota,
+				Err: err,
+			}
+		}
 	}
 
 	allowed := (month == nil || month.Allowed) && result.Allowed

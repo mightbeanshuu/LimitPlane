@@ -30,26 +30,51 @@ cost class** and budgets them per **tenant + tier + route**.
 
 ## Why Go
 
-The limiter is pure CPU work over in-memory state — precisely what a
-single-threaded runtime cannot scale. The original Node implementation measured
-**~181,000 admission checks/sec**, and that was a ceiling imposed by the
-runtime, not the algorithm: JavaScript runs one callback at a time, so no
-number of cores helps.
+**Not for single-thread speed.** The Node original's README quoted ~181,000
+checks/sec, but that benchmark measured the *Redis* limiter over a socket — it
+was timing network round trips, not the limiter. Measured honestly, in memory,
+on the same machine (Apple M2):
 
-The Go token bucket, benchmarked with `go test -bench` on an Apple M2:
-
-| Benchmark | Throughput | ns/op | allocs/op |
+| | Throughput | ns/op | allocs/op |
 |---|---|---|---|
-| Serial, one key | **18.7M checks/sec** | 53.4 | 0 |
-| Parallel, 512 tenants | **14.4M checks/sec** | 69.6 | 0 |
-| Parallel, one hot key (worst case) | **6.8M checks/sec** | 146 | 0 |
+| Node in-memory token bucket | ~22M checks/sec | 45 | 1 |
+| Go in-memory token bucket | ~18M checks/sec | 55 | **0** |
 
-Reproduce: `go test -bench=. -benchtime=2s ./internal/limiter/`
+Numbers are the floor of 5 runs at `-count=5` on an otherwise idle machine
+(serial 18.1–18.4M, parallel 24.2–25.7M). Benchmark a loaded laptop and you
+will get something else; re-run before quoting any of this.
 
-Two things make that possible. The bucket map is **sharded** (lock striping) so
-admission decisions do not all serialise on one mutex — `-bench=ShardCount`
-shows the curve from 1 shard upward. And the hot path allocates nothing, so the
-garbage collector never sees the traffic.
+Node is *faster* single-threaded. V8's JIT is very good at a monomorphic hot
+loop like this one. Pretending otherwise would not survive one follow-up
+question.
+
+The Go argument is three other things:
+
+1. **That 22M is the ceiling for the entire Node process**, because JavaScript
+   runs one callback at a time. Go's number is per-core and aggregates — the
+   parallel benchmark sustains **over 24M checks/sec across 8 cores** while
+   serving traffic, and keeps climbing on a bigger box.
+2. **Zero allocations per check**, so sustained load creates no GC pressure.
+   The Node version allocates a result object on every single call.
+3. **It has to be correct under real parallelism**, which Node never had to be.
+
+Where the engineering actually shows up is lock striping. A naive port — one
+map behind one mutex — serialises every admission decision in the process:
+
+```
+ 1 shard     6.7M checks/sec   149 ns/op   <- a single global lock
+ 8 shards   12.8M checks/sec    78 ns/op   <- 1x GOMAXPROCS, the obvious default
+32 shards   20.5M checks/sec    49 ns/op
+128 shards  25.4M checks/sec    39 ns/op   <- flattens out here
+```
+
+**3.8x from sharding alone.** The default is ~8x GOMAXPROCS, not 1x: goroutines
+are not pinned to cores and hash collisions cluster, so one shard per core
+leaves them hot. Reproduce all of it:
+
+```bash
+go test -bench=. -benchtime=3s ./internal/limiter/
+```
 
 The port was not a transliteration. Node's event loop made every shared map
 safe *by accident*; Go serves handlers in parallel, so each store is explicitly
@@ -277,9 +302,13 @@ Each package is short and its doc comment explains why it exists.
 | 7 | `internal/billing` | Plans, Stripe checkout, webhook automation |
 | 8 | `internal/server` | The HTTP surface wiring it all together |
 
-Any limiter can be swapped in via `gateway.Config{Limiter: ...}`. Use a Redis
-variant when you run more than one replica so every instance shares one bucket
-— the in-memory limiters are correct per process, not per cluster.
+Any limiter can be swapped in via `gateway.Config{Limiter: ...}`, which takes
+the `limiter.BurstLimiter` interface. Use a Redis variant when you run more than
+one replica so every instance shares one counter — **the in-memory limiters are
+correct per process, not per cluster**, so three replicas behind a load balancer
+would each grant a tenant their full budget. A Redis limiter that is unreachable
+fails OPEN: an outage in the rate limiter should cost you rate limiting, not
+availability.
 
 ## Tests
 

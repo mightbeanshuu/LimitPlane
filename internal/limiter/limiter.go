@@ -19,6 +19,27 @@ type Decision struct {
 	ResetAt   int64 `json:"resetAt,omitempty"` // unix ms; window limiters only
 }
 
+// BurstLimiter is what the gateway actually depends on: something that can
+// answer one admission question. Defining it here rather than taking a concrete
+// *TokenBucket is what makes the distributed limiters usable — without it the
+// Redis implementations compile, are tested, and are wired into nothing.
+//
+// It returns an error because a distributed limiter talks to the network and a
+// local one cannot fail; callers decide the policy for a limiter that is down.
+type BurstLimiter interface {
+	CheckBurst(BurstArgs) (Decision, error)
+}
+
+// BurstArgs is the union of what the token-bucket and window limiters need, so
+// one interface covers both families.
+type BurstArgs struct {
+	Key             string
+	Capacity        float64 // token bucket: jar size. windows: the limit.
+	RefillRatePerMs float64 // token bucket only
+	WindowMs        int64   // window limiters only
+	Cost            float64
+}
+
 // Clock is an injectable time source — the same trick the JS version used, so
 // tests can drive time forward instead of sleeping.
 type Clock func() int64

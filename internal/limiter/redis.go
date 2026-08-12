@@ -77,3 +77,31 @@ func (r *RedisLuaFixedWindow) Check(a WindowArgs) (Decision, error) {
 		Remaining: int(math.Max(a.Limit-float64(count), 0)),
 	}, nil
 }
+
+// CheckBurst adapts the Redis fixed-window limiter to the BurstLimiter
+// interface. Capacity is read as the window's request limit, and WindowMs
+// defaults to one minute when the caller has not set one.
+func (r *RedisFixedWindow) CheckBurst(a BurstArgs) (Decision, error) {
+	return r.Check(WindowArgs{Key: a.Key, Limit: a.Capacity, WindowMs: windowOr(a.WindowMs), Cost: a.Cost})
+}
+
+// CheckBurst adapts the atomic Lua variant to the BurstLimiter interface.
+func (r *RedisLuaFixedWindow) CheckBurst(a BurstArgs) (Decision, error) {
+	return r.Check(WindowArgs{Key: a.Key, Limit: a.Capacity, WindowMs: windowOr(a.WindowMs), Cost: a.Cost})
+}
+
+func windowOr(ms int64) int64 {
+	if ms <= 0 {
+		return 60_000
+	}
+	return ms
+}
+
+// Compile-time proof that every limiter the gateway may be handed actually
+// satisfies the interface. Without these, a signature drift is only caught at
+// the call site — or not at all, if nothing wires the Redis path up.
+var (
+	_ BurstLimiter = (*TokenBucket)(nil)
+	_ BurstLimiter = (*RedisFixedWindow)(nil)
+	_ BurstLimiter = (*RedisLuaFixedWindow)(nil)
+)
