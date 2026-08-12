@@ -1,18 +1,40 @@
 # Render Blueprint — deploys the LimitPlane gateway as a real, always-on
-# Node process (something serverless platforms can't be: it holds in-memory
-# token buckets, WebSocket + SSE connections, and monthly meters).
-# Free tier note: the instance sleeps after ~15 min idle; first request
-# after that takes ~30-50s to wake. Disk is ephemeral (tenants re-seed).
+# process. That matters: it holds in-memory token buckets, WebSocket and SSE
+# connections, and monthly meters, none of which survive on a platform that
+# freezes the process between requests.
+#
+# Free tier notes, stated honestly because they change how the demo behaves:
+#   - the instance sleeps after ~15 min idle; the first request after that
+#     takes ~30-50s to wake
+#   - the disk is ephemeral, so .tenants.json / .orgs.json / .memory.jsonl are
+#     lost on every deploy and the gateway re-seeds its one production site
 services:
   - type: web
     name: limitplane
-    runtime: node
+    runtime: docker
+    dockerfilePath: ./Dockerfile
     plan: free
-    buildCommand: npm install --omit=dev
-    startCommand: node src/server.js
-    healthCheckPath: /v1/billing/plans
+    healthCheckPath: /healthz
     envVars:
       - key: JWT_SECRET
         generateValue: true # stable sessions across restarts
+      - key: DATA_DIR
+        value: /tmp # scratch image runs unprivileged; /tmp is writable
+      # ---- paste at deploy time; never committed ----
       - key: GROQ_API_KEY
-        sync: false # paste at deploy time; never in the repo
+        sync: false # absent -> deterministic fallbacks, nothing breaks
+      - key: DASH_ADMIN_PASSWORD
+        sync: false
+      - key: DASH_VIEWER_PASSWORD
+        sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      # ---- Stripe: absent -> honest demo mode + /v1/billing/simulate ----
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+      - key: STRIPE_PRICE_ENTERPRISE
+        sync: false

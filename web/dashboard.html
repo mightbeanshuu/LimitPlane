@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LimitPlane · Live Dashboard</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<style>
+  :root{
+    --bg:#eef2f8; --ink:#1c2940; --dim:#5d6b84; --faint:#93a0b6;
+    --sky:#0284c7; --teal:#0d9488; --rose:#e11d48; --amber:#d97706;
+    --glass:rgba(255,255,255,.58); --glass-edge:rgba(255,255,255,.85);
+    --shadow-dark:rgba(163,177,198,.5); --shadow-light:rgba(255,255,255,.95);
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --display:'Bricolage Grotesque',-apple-system,sans-serif;
+    --inner:rgba(255,255,255,.5);
+    --wash1:rgba(56,189,248,.16); --wash2:rgba(45,212,191,.14); --wash3:rgba(129,140,248,.12);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b1120; --ink:#e2e8f0; --dim:#94a3b8; --faint:#5d6b84;
+    --sky:#38bdf8; --teal:#2dd4bf; --rose:#fb7185; --amber:#fbbf24;
+    --glass:rgba(17,26,46,.58); --glass-edge:rgba(148,163,184,.16);
+    --inner:rgba(15,23,42,.55);
+    --shadow-dark:rgba(0,0,0,.55); --shadow-light:rgba(148,163,184,.06);
+    --wash1:rgba(56,189,248,.09); --wash2:rgba(45,212,191,.07); --wash3:rgba(129,140,248,.08);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:var(--bg);color:var(--ink);min-height:100vh;
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;position:relative;overflow-x:hidden;transition:background .3s,color .3s;
+  }
+  body::before{content:"";position:fixed;inset:0;z-index:-1;background:
+    radial-gradient(560px 420px at 12% -6%,var(--wash1),transparent 65%),
+    radial-gradient(520px 420px at 88% 8%,var(--wash2),transparent 65%),
+    radial-gradient(640px 480px at 55% 110%,var(--wash3),transparent 65%)}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 24px 60px}
+  .glass{background:var(--glass);backdrop-filter:blur(18px) saturate(1.5);-webkit-backdrop-filter:blur(18px) saturate(1.5);
+    border:1px solid var(--glass-edge);border-radius:20px;box-shadow:0 10px 34px rgba(30,45,90,.09)}
+  .neo{background:var(--bg);border-radius:18px;box-shadow:7px 7px 15px var(--shadow-dark),-7px -7px 15px var(--shadow-light)}
+  .neo-in{background:var(--bg);border-radius:14px;box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+
+  header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:22px}
+  .brand{display:flex;align-items:center;gap:12px;font-family:var(--display);font-weight:700;font-size:19px;letter-spacing:.05em}
+  .brand img{width:38px;height:38px;border-radius:10px;box-shadow:4px 4px 10px var(--shadow-dark)}
+  .brand .p{color:var(--sky)}
+  .hright{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .statusbar{display:flex;align-items:center;gap:10px;font:12px var(--mono);color:var(--dim);padding:9px 16px}
+  .statusbar .sep{width:1px;height:14px;background:var(--glass-edge)}
+  .transport{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--teal);padding:3px 8px;border-radius:99px;background:rgba(13,148,136,.12)}
+  .ping{position:relative;width:12px;height:12px;display:inline-block;flex:none}
+  .ping i{position:absolute;inset:2px;border-radius:50%;background:var(--teal)}
+  .ping::after{content:"";position:absolute;inset:0;border-radius:50%;border:1.5px solid var(--teal);animation:ring 1.8s ease-out infinite}
+  @keyframes ring{0%{transform:scale(.5);opacity:.9}80%,100%{transform:scale(1.8);opacity:0}}
+  .statusbar.err .ping i{background:var(--rose)}
+  .statusbar.err .ping::after{border-color:var(--rose);animation:none;opacity:0}
+  .statusbar.err .transport{color:var(--rose);background:rgba(225,29,72,.12)}
+  .avatar{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 11px var(--display);color:#fff;background:linear-gradient(135deg,var(--sky),var(--teal));flex:none}
+  a.iconbtn{display:flex;align-items:center;justify-content:center;text-decoration:none}
+  .iconbtn{width:38px;height:38px;border:none;border-radius:12px;cursor:pointer;background:var(--bg);color:var(--ink);font-size:15px;
+    box-shadow:5px 5px 11px var(--shadow-dark),-5px -5px 11px var(--shadow-light)}
+  .iconbtn:active{box-shadow:inset 4px 4px 8px var(--shadow-dark),inset -4px -4px 8px var(--shadow-light)}
+  .userchip{display:flex;align-items:center;gap:9px;padding:7px 8px 7px 14px;font:12px var(--mono);color:var(--dim)}
+  .userchip b{color:var(--ink);font-weight:600}
+  .userchip .role{font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:99px;background:rgba(2,132,199,.14);color:var(--sky)}
+  .userchip .role.viewer{background:rgba(93,107,132,.14);color:var(--dim)}
+  .userchip button{border:none;cursor:pointer;font:600 11px var(--mono);color:var(--rose);background:transparent;padding:6px 8px}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:18px;margin-bottom:22px}
+  .kpi{padding:18px 20px}
+  .kpi .lbl{font:11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+  .kpi .val{font-family:var(--display);font-size:30px;font-weight:700;margin-top:4px}
+  .kpi .val small{font-size:13px;color:var(--dim);font-weight:400}
+  .kpi.good .val{color:var(--teal)} .kpi.bad .val{color:var(--rose)} .kpi.warn .val{color:var(--amber)}
+
+  .grid{display:grid;grid-template-columns:1.5fr 1fr;gap:18px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .panel{padding:20px 22px;margin-bottom:18px}
+  .panel h2{font-family:var(--display);font-size:16px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;gap:10px;flex-wrap:wrap}
+  .panel h2 span{font:11px var(--mono);color:var(--faint);letter-spacing:.08em;font-weight:400}
+
+  .chartwrap{position:relative;height:150px;padding:6px}
+  .chartwrap canvas{width:100%;height:100%;display:block}
+
+  .tenants{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+  .tenant{padding:16px 18px;border-radius:16px}
+  .tenant .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px}
+  .tenant .id{font:600 13px var(--mono);word-break:break-all}
+  .chip{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:4px 9px;border-radius:99px;white-space:nowrap}
+  .chip.free{background:rgba(93,107,132,.14);color:var(--dim)}
+  .chip.pro{background:rgba(2,132,199,.14);color:var(--sky)}
+  .chip.enterprise{background:rgba(13,148,136,.16);color:var(--teal)}
+  .chip.ban{background:rgba(225,29,72,.14);color:var(--rose)}
+  .meter{height:9px;border-radius:6px;overflow:hidden;margin:8px 0 6px}
+  .meter i{display:block;height:100%;width:100%;transform-origin:left;border-radius:6px;background:linear-gradient(90deg,var(--teal),var(--sky));transition:transform .4s ease}
+  .meter i.hot{background:linear-gradient(90deg,var(--amber),var(--rose))}
+  .tenant .sub{font:11px var(--mono);color:var(--dim);display:flex;justify-content:space-between}
+  .mgmt{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .mgmt button,.mgmt select{border:none;cursor:pointer;font:600 11px var(--mono);padding:8px 11px;border-radius:10px;background:var(--bg);color:var(--ink);
+    box-shadow:4px 4px 9px var(--shadow-dark),-4px -4px 9px var(--shadow-light)}
+  .mgmt button:active{box-shadow:inset 3px 3px 7px var(--shadow-dark),inset -3px -3px 7px var(--shadow-light)}
+  .mgmt .banb{color:var(--rose)} .mgmt .unbanb{color:var(--teal)}
+
+  .feed{max-height:330px;overflow-y:auto;display:flex;flex-direction:column;gap:7px}
+  .row{padding:9px 13px;border-radius:12px;font:12px var(--mono);display:flex;gap:10px;align-items:center;background:var(--inner)}
+  .row.no{background:rgba(225,29,72,.06)}
+  .row .st{font-weight:700;min-width:34px}
+  .row.ok .st{color:var(--teal)} .row.no .st{color:var(--rose)}
+  .row .rt{flex:1;color:var(--ink);word-break:break-all} .row .who{color:var(--dim)} .row .why{color:var(--faint)}
+
+  .acts{display:flex;flex-direction:column;gap:10px;max-height:330px;overflow-y:auto}
+  .act{padding:13px 15px;border-radius:14px;background:var(--inner)}
+  .act .t{font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
+  .act .t.auto_cooldown,.act .t.manual_ban{color:var(--rose)} .act .t.quota_alert{color:var(--amber)}
+  .act .t.upgrade_nudge{color:var(--sky)} .act .t.manual_unban{color:var(--teal)}
+  .act .m{font-size:12.5px;color:var(--dim)}
+  .act .ai{margin-top:7px;font-size:12px;color:var(--ink);background:rgba(56,189,248,.09);border-radius:9px;padding:8px 10px}
+  .act .ai::before{content:"AI · ";font:10px var(--mono);color:var(--sky);letter-spacing:.1em}
+
+  .controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+  .btn{font:600 13px/1 inherit;color:var(--ink);padding:13px 18px;border:none;cursor:pointer;border-radius:14px;background:var(--bg);
+    box-shadow:5px 5px 11px var(--shadow-dark),-5px -5px 11px var(--shadow-light);transition:box-shadow .12s}
+  .btn:active{box-shadow:inset 4px 4px 8px var(--shadow-dark),inset -4px -4px 8px var(--shadow-light)}
+  .btn small{display:block;font-weight:400;color:var(--faint);margin-top:3px;font-size:11px}
+  .btn.storm{color:var(--rose)} .btn.up{color:var(--sky)}
+  .toggle{display:flex;align-items:center;gap:9px;font:12px var(--mono);color:var(--dim);cursor:pointer;padding:10px 14px}
+  .empty{color:var(--faint);font:12px var(--mono);padding:14px}
+  .clearbtn{margin-left:auto;border:none;cursor:pointer;font:600 10px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--faint);background:var(--inner);padding:5px 11px;border-radius:8px}
+  .clearbtn:hover{color:var(--rose)}
+  .addsite{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .addsite input,.addsite select{border:none;font:13px var(--mono);color:var(--ink);padding:12px 14px;border-radius:12px;background:var(--bg);outline:none;
+    box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+  .addsite input{flex:1;min-width:220px}
+  .snippet{margin-top:14px;display:none}
+  .snippet .code{position:relative;background:#0a0f1d;border-radius:12px;margin-top:8px}
+  .snippet pre{padding:13px 15px;font:12px/1.6 var(--mono);color:#e2e8f0;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
+  .snippet .lbl{font:11px var(--mono);color:var(--dim)}
+  .snippet .copy{position:absolute;top:8px;right:8px;font:11px var(--mono);color:#93a0b6;background:#111a2e;border:1px solid #243349;border-radius:6px;padding:5px 10px;cursor:pointer}
+  .mgmt .rmb{color:var(--faint)}
+  .keybox{display:none;margin-bottom:18px;padding:14px 18px;gap:10px;align-items:center}
+  .keybox input{flex:1;border:none;background:transparent;font:13px var(--mono);color:var(--ink);outline:none;padding:10px 12px}
+
+  /* ---------- login gate ---------- */
+  #map{height:300px;border-radius:14px;overflow:hidden}
+  .leaflet-container{background:transparent;font:11px var(--mono)}
+  .ipchip{font-size:10px;color:var(--faint);background:var(--inner);padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .bchip{font-size:9px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .bchip.human{background:rgba(13,148,136,.16);color:var(--teal)}
+  .bchip.ai_agent{background:rgba(2,132,199,.16);color:var(--sky)}
+  .bchip.crawler{background:rgba(217,119,6,.16);color:var(--amber)}
+  .bchip.retry_bug{background:rgba(225,29,72,.16);color:var(--rose)}
+  .bchip.warming{background:rgba(120,130,150,.16);color:var(--faint)}
+  .maptools{display:flex;gap:6px;align-items:center}
+  .maptools button{border:none;cursor:pointer;font:10px var(--mono);padding:5px 10px;border-radius:8px;background:var(--inner);color:var(--dim)}
+  .maptools button.on{color:var(--ink);box-shadow:inset 0 0 0 1px var(--glass-edge)}
+  .maplegend{display:flex;gap:12px;margin-top:8px;font:10px var(--mono);color:var(--faint);flex-wrap:wrap}
+  .maplegend span{display:flex;align-items:center;gap:5px}
+  .maplegend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  #globe canvas{width:100%;height:100%;display:block;border-radius:14px}
+  .devchip{font-size:10px;color:var(--dim);background:var(--inner);padding:2px 7px;border-radius:99px;white-space:nowrap}
+  .aprules{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+  .aprule{font:10px var(--mono);padding:4px 9px;border-radius:8px;background:var(--inner);color:var(--dim);display:flex;align-items:center;gap:5px}
+  .aprule i{width:6px;height:6px;border-radius:50%;background:var(--teal)}
+  .aprule.ai i{background:var(--sky)} .aprule.off i{background:var(--faint)}
+  .act .t.ai_ban{color:var(--sky)}
+  .chatfab{position:fixed;right:22px;bottom:22px;z-index:55;width:52px;height:52px;border:none;border-radius:50%;cursor:pointer;font-size:20px;color:#fff;background:linear-gradient(135deg,var(--sky),var(--teal));box-shadow:0 10px 26px rgba(2,132,199,.35)}
+  .chatbox{position:fixed;right:22px;bottom:84px;z-index:55;width:min(360px,calc(100vw - 44px));display:none;flex-direction:column;overflow:hidden}
+  .chatbox.open{display:flex}
+  .chathead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;font-family:var(--display);font-weight:700;font-size:14px;border-bottom:1px solid var(--glass-edge)}
+  .chathead button{border:none;background:transparent;color:var(--faint);cursor:pointer;font-size:16px}
+  .chatlog{max-height:320px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .m{max-width:85%;padding:9px 12px;border-radius:13px;font-size:12.5px;line-height:1.5}
+  .m.user{align-self:flex-end;background:var(--sky);color:#fff;border-bottom-right-radius:4px}
+  .m.ai{align-self:flex-start;background:var(--inner);color:var(--ink);border-bottom-left-radius:4px}
+  .chatin{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--glass-edge)}
+  .chatin input{flex:1;border:none;background:transparent;color:var(--ink);font:13px var(--mono);outline:none;padding:8px 10px}
+  .chatin button{border:none;cursor:pointer;font:700 14px var(--mono);color:var(--sky);background:transparent}
+  .m .srcs{margin-top:7px;padding-top:6px;border-top:1px solid var(--glass-edge);font:10.5px var(--mono);color:var(--faint);line-height:1.7}
+
+  #login{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .35s}
+  #login.gone{opacity:0;pointer-events:none}
+  .logincard{width:min(400px,92vw);padding:34px 32px;text-align:center}
+  .logincard img{width:56px;height:56px;border-radius:14px;margin-bottom:14px}
+  .logincard h1{font-family:var(--display);font-size:22px;font-weight:700;margin-bottom:4px}
+  .logincard p{color:var(--dim);font-size:13px;margin-bottom:22px}
+  .field{display:block;width:100%;margin-bottom:12px;padding:13px 15px;border:none;border-radius:13px;background:var(--bg);color:var(--ink);font:13.5px var(--mono);outline:none;
+    box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+  .loginbtn{width:100%;border:none;cursor:pointer;padding:14px;border-radius:13px;font:600 14px inherit;color:#fff;background:linear-gradient(90deg,var(--sky),var(--teal));margin-top:4px}
+  .hint{margin-top:14px;font:11px var(--mono);color:var(--faint)}
+  .lerr{color:var(--rose);font:11.5px var(--mono);min-height:16px;margin-top:8px}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN (JWT; hidden in proxy mode) ============ -->
+<div id="login" class="gone">
+  <div class="logincard glass">
+    <a href="/"><img src="/logo.svg" onerror="this.style.display='none'" alt=""></a>
+    <h1>LIMIT<span style="color:var(--sky)">PLANE</span></h1>
+    <p id="lTitle">Sign in to view the dashboard</p>
+    <input class="field" id="lEmail" type="email" placeholder="email" autocomplete="username">
+    <input class="field" id="lPass" type="password" placeholder="password" autocomplete="current-password">
+    <button class="loginbtn" id="lBtn" onclick="doAuth()">Log in</button>
+    <div class="lerr" id="lErr"></div>
+    <div class="hint" style="margin-top:16px">
+      <span id="lSwitch" style="cursor:pointer;color:var(--sky)" onclick="toggleAuthMode()">New here? Create an account</span>
+    </div>
+    <div class="hint" style="margin-top:14px;opacity:.75">demo admin: demo@limitplane.dev · demo123</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <header>
+    <a class="brand" href="/" title="back to homepage" style="text-decoration:none;color:inherit"><img src="/logo.svg" onerror="this.style.display='none'" alt="LimitPlane logo">LIMIT<span class="p">PLANE</span>&nbsp;<span style="font-weight:400;color:var(--dim);font-size:14px">/ live dashboard</span></a>
+    <div class="hright">
+      <div class="statusbar glass" id="statusbar"><span class="ping"><i></i></span><span id="liveTxt">connecting…</span><span class="sep"></span><span class="transport" id="transport">boot</span></div>
+      <button class="iconbtn" id="themeBtn" title="toggle theme">◐</button>
+      <a class="iconbtn" href="/admin" id="admLink" title="organizations admin">⌘</a>
+      <div class="userchip glass" id="userchip" style="display:none"><span class="avatar" id="avatar"></span><b id="whoami"></b><span class="role" id="rolechip"></span><button onclick="doLogout()">logout</button></div>
+    </div>
+  </header>
+
+  <div class="keybox glass" id="keybox">
+    <span style="font:11px var(--mono);color:var(--dim)">ADMIN KEY</span>
+    <input class="neo-in" id="adminKey" placeholder="x-limitplane-admin value from your config">
+    <button class="btn" onclick="saveKey()">connect</button>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi neo"><div class="lbl">Total checks</div><div class="val" id="kChecks">–</div></div>
+    <div class="kpi neo good"><div class="lbl">Allowed</div><div class="val" id="kAllowed">–</div></div>
+    <div class="kpi neo bad"><div class="lbl">Blocked</div><div class="val" id="kBlocked">–</div></div>
+    <div class="kpi neo warn"><div class="lbl">Active cooldowns</div><div class="val" id="kBans">–</div></div>
+    <div class="kpi neo"><div class="lbl">Visitors</div><div class="val" id="kVis">–</div></div>
+    <div class="kpi neo"><div class="lbl">Uptime</div><div class="val" id="kUp">–</div></div>
+  </div>
+
+  <div class="panel glass">
+    <h2>Traffic <span>last 60s</span></h2>
+    <div class="chartwrap neo-in"><canvas id="chartCanvas"></canvas></div>
+  </div>
+
+  <div class="panel glass">
+    <h2>Visitor map <span class="maptools"><button id="heatBtn" class="on" onclick="setMapMode('heat')">heatmap</button><button id="ptBtn" onclick="setMapMode('points')">points</button><button id="globeBtn" onclick="setMapMode('globe')">3D globe</button><span id="visMeta"></span></span></h2>
+    <div id="map" class="neo-in"></div>
+    <div id="globe" class="neo-in" style="display:none;height:340px"></div>
+    <div class="maplegend"><span><i style="background:#2dd4bf"></i>human</span><span><i style="background:#38bdf8"></i>AI agent</span><span><i style="background:#fbbf24"></i>crawler</span><span><i style="background:#fb7185"></i>retry-bug</span></div>
+  </div>
+
+  <div class="panel glass" id="addPanel" style="display:none">
+    <h2>Add a site</h2>
+    <div class="addsite">
+      <input id="siteName" placeholder="site name, e.g. visualise.vercel.app">
+      <select id="siteTier"><option>free</option><option>pro</option><option>enterprise</option></select>
+      <button class="btn up" onclick="addSite()">Connect site</button>
+    </div>
+    <div class="snippet" id="snippet">
+      <span class="lbl" id="snipLbl"></span>
+      <div class="code"><pre id="snipCode"></pre><button class="copy" onclick="copySnip()">copy</button></div>
+    </div>
+  </div>
+
+  <div class="panel glass">
+    <h2>Connected sites <span id="mgmtHint"></span></h2>
+    <div class="tenants" id="tenants"><div class="empty">No sites yet</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel glass">
+      <h2>Decision feed <button class="clearbtn" onclick="clearFeed()">clear</button></h2>
+      <div class="feed" id="feed"><div class="empty">Waiting…</div></div>
+    </div>
+    <div class="panel glass">
+      <h2>Autopilot <span id="apState"></span></h2>
+      <div id="apRules" class="aprules"></div>
+      <div class="acts" id="acts"><div class="empty">Watching — rules armed, AI review every 20s</div></div>
+    </div>
+  </div>
+
+  <div class="panel glass" id="trafficPanel">
+    <h2>Generate traffic</h2>
+    <div class="controls">
+      <button class="btn" onclick="hit(null,'/v1/demo/ping')">Ping<small>1 unit</small></button>
+      <button class="btn" onclick="scan(null)">Heavy scan<small>5 units</small></button>
+      <button class="btn storm" onclick="storm()">Retry-storm<small>triggers auto-ban</small></button>
+      <label class="toggle neo"><input type="checkbox" id="autoT"> auto traffic</label>
+    </div>
+  </div>
+
+</div>
+
+<button class="chatfab" id="chatFab" title="ask LimitPlane AI">✦</button>
+<div class="chatbox glass" id="chatbox">
+  <div class="chathead">LimitPlane AI <button onclick="document.getElementById('chatbox').classList.remove('open')">×</button></div>
+  <div class="chatlog" id="chatlog"><div class="m ai">Ask about live traffic, tenants, bans, plans.</div></div>
+  <div class="chatin"><input id="chatInput" placeholder="why was that IP banned?"><button onclick="sendChat()">→</button></div>
+</div>
+
+<script>
+  // ---------- theme ----------
+  const rootEl = document.documentElement;
+  rootEl.dataset.theme = localStorage.getItem("lp_theme") ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.getElementById("themeBtn").onclick = () => {
+    rootEl.dataset.theme = rootEl.dataset.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("lp_theme", rootEl.dataset.theme);
+    drawChart(lastSeries); // chart colors come from the theme vars
+    setTiles();
+    window.themeThree?.();
+  };
+
+  // ---------- two homes, one file ----------
+  // Demo gateway (/dashboard): JWT login, SSE real-time, live management.
+  // Proxy (/_limitplane/dashboard): adminKey header + polling (no JWT there).
+  const PROXY = location.pathname.startsWith("/_limitplane");
+  // Hosted copies of this file set window.LP_GATEWAY to the public gateway;
+  // served by the gateway itself, same-origin is the gateway.
+  const GW = window.LP_GATEWAY ?? "";
+  const BASE = PROXY ? "/_limitplane" : GW + "/v1/admin";
+  const $ = id => document.getElementById(id);
+
+  let token = localStorage.getItem("lp_token") ?? "";
+  let role = localStorage.getItem("lp_role") ?? "";
+  let adminKey = localStorage.getItem("lp_admin_key") ?? "";
+
+  const appBody = document.querySelector(".wrap");
+  if (PROXY) {
+    $("keybox").style.display = "flex";
+    $("adminKey").value = adminKey;
+    $("trafficPanel").style.display = "none";
+    $("mgmtHint").textContent = "read-only";
+  } else if (!token) {
+    // No login = no dashboard. Guests see only the sign-in / create-account card.
+    $("login").classList.remove("gone");
+    appBody.style.filter = "blur(6px)";
+    appBody.style.pointerEvents = "none";
+  }
+  function saveKey(){ adminKey = $("adminKey").value.trim(); localStorage.setItem("lp_admin_key", adminKey); tick(); }
+
+  // ---------- JWT auth ----------
+  let authMode = "login"; // or "signup"
+  function toggleAuthMode(){
+    authMode = authMode === "login" ? "signup" : "login";
+    $("lTitle").textContent = authMode === "login" ? "Sign in to view the dashboard" : "Create your account";
+    $("lBtn").textContent = authMode === "login" ? "Log in" : "Create account";
+    $("lSwitch").textContent = authMode === "login" ? "New here? Create an account" : "Have an account? Sign in";
+    $("lErr").textContent = "";
+  }
+  async function doAuth(){
+    const email = $("lEmail").value.trim(), password = $("lPass").value;
+    if (!email || !password){ $("lErr").textContent = "email and password required"; return; }
+    const path = authMode === "signup" ? "/v1/auth/signup" : "/v1/auth/login";
+    const r = await fetch(GW + path, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }) });
+    const data = await r.json();
+    if (!r.ok){
+      $("lErr").textContent = { email_taken: "that email is taken", weak_password: "password needs 6+ characters",
+        invalid_email: "enter a valid email", bad_credentials: "wrong email or password" }[data.error] ?? "could not " + authMode;
+      return;
+    }
+    token = data.token; role = data.role;
+    localStorage.setItem("lp_token", token); localStorage.setItem("lp_role", role); localStorage.setItem("lp_user", email);
+    $("login").classList.add("gone");
+    const wrapEl = document.querySelector(".wrap"); wrapEl.style.filter = ""; wrapEl.style.pointerEvents = "";
+    enterUi(); connectLive(); tick();
+  }
+  function doLogout(){
+    ["lp_token","lp_role","lp_user"].forEach(k => localStorage.removeItem(k));
+    location.reload();
+  }
+  function clearFeed(){ feedRows.length = 0; $("feed").innerHTML = '<div class="empty">Cleared</div>'; }
+  function enterUi(){
+    if (PROXY) return;
+    $("userchip").style.display = "flex";
+    const email = localStorage.getItem("lp_user") ?? "user";
+    $("whoami").textContent = email.split("@")[0];
+    $("avatar").textContent = email[0].toUpperCase();
+    const rc = $("rolechip"); rc.textContent = role; rc.className = "role " + role;
+    if (role === "admin") $("addPanel").style.display = "block"; // viewers watch
+  }
+  $("lPass")?.addEventListener("keydown", e => { if (e.key === "Enter") doAuth(); });
+
+  const HDRS = () => PROXY ? { "x-limitplane-admin": adminKey } : { authorization: "Bearer " + token };
+  async function fetchJson(path){
+    const r = await fetch(BASE + path, { headers: HDRS() });
+    if (r.status === 401 && !PROXY){ doLogout(); }
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }
+
+  // ---------- painting ----------
+  const fmt = n => n >= 1000 ? (n/1000).toFixed(1) + "k" : String(n);
+  const ago = ms => ms < 60000 ? Math.floor(ms/1000)+"s" : ms < 3600000 ? Math.floor(ms/60000)+"m" : Math.floor(ms/3600000)+"h";
+  const feedRows = [], actRows = [];
+
+  function paintStats(s){
+    $("kChecks").textContent = fmt(s.totals.checks);
+    $("kAllowed").textContent = fmt(s.totals.allowed);
+    $("kBlocked").textContent = fmt(s.totals.blocked);
+    $("kBans").textContent = s.tenants.filter(t => t.bannedMs > 0).length;
+    $("kUp").innerHTML = ago(s.uptimeMs) + "<small></small>";
+    if (s.uniqueVisitors !== undefined) $("kVis").textContent = s.uniqueVisitors;
+    if (s.visitors){ lastVisitors = s.visitors; mapMode === "globe" ? drawGlobe(s.visitors) : updateMap(s.visitors); }
+
+    drawChart(s.series);
+
+    if (s.tenants.length){
+      const canManage = !PROXY && role === "admin";
+      $("tenants").innerHTML = s.tenants.map(t => {
+        const q = t.monthly, pct = q ? Math.min(t.monthly.used / t.monthly.quota, 1) : 0;
+        const isAnon = t.tenantId.startsWith("anon:");
+        return `<div class="tenant neo">
+          <div class="top"><span class="id">${t.tenantId}</span>
+            ${t.bannedMs > 0 ? `<span class="chip ban">cooldown ${Math.ceil(t.bannedMs/1000)}s</span>` : `<span class="chip ${t.tier}">${t.tier}</span>`}
+          </div>
+          <div class="meter neo-in"><i class="${pct > .8 ? "hot" : ""}" style="transform:scaleX(${q ? pct.toFixed(3) : 0})"></i></div>
+          <div class="sub"><span>${q ? `${fmt(q.used)} / ${fmt(q.quota)} units` : "no monthly plan"}</span><span>${fmt(t.allowed)} ok · ${fmt(t.blocked)} blocked</span></div>
+      ${t.fingerprint ? `<div style="margin-top:7px"><span class="bchip ${t.fingerprint}">${t.fingerprint.replace("_"," ")}</span></div>` : ""}
+          ${canManage ? `<div class="mgmt">
+            ${t.bannedMs > 0
+              ? `<button class="unbanb" onclick="mgmt('unban','${t.tenantId}')">unban now</button>`
+              : `<button class="banb" onclick="mgmt('ban','${t.tenantId}')">ban 60s</button>`}
+            ${isAnon ? "" : `<select onchange="setTier('${t.tenantId}', this.value)">
+              ${["free","pro","enterprise"].map(x => `<option ${x === t.tier ? "selected" : ""}>${x}</option>`).join("")}
+            </select>
+            <button class="rmb" onclick="removeSite('${t.tenantId}')">remove</button>`}
+          </div>` : ""}
+        </div>`;
+      }).join("");
+    }
+  }
+  function paintFeed(){ if (feedRows.length) $("feed").innerHTML = feedRows.slice(0, 14).map(e => `
+      <div class="row ${e.allowed ? "ok" : "no"}">
+        <span class="st">${e.allowed ? "200" : "429"}</span><span class="rt">${e.route}</span>
+        <span class="who">${e.tenantId}</span>${e.ip ? `<span class="ipchip">${e.ip}</span>` : ""}${e.label ? `<span class="bchip ${e.label}">${e.label.replace("_"," ")}</span>` : ""}<span class="why">${e.allowed ? e.costClass : (e.reason ?? "")}</span>
+      </div>`).join(""); }
+  function paintActs(){ if (actRows.length) $("acts").innerHTML = actRows.slice(0, 8).map(a => `
+      <div class="act">
+        <div class="t ${a.type}">${a.type.replace(/_/g," ")}</div>
+        <div class="m">${a.message}</div>
+        ${a.aiNote ? `<div class="ai">${a.aiNote}</div>` : ""}
+      </div>`).join(""); }
+
+  // ---------- real-time: SSE first, polling as fallback ----------
+  let ws = null, es = null, pollTimer = null;
+  function onLiveMsg(type, data){
+    if (type === "stats") paintStats(data);
+    if (type === "decision"){ feedRows.unshift(data); if (feedRows.length > 30) feedRows.pop(); paintFeed(); }
+    if (type === "action"){ actRows.unshift(data); if (actRows.length > 12) actRows.pop(); paintActs(); }
+    if (type === "action_note"){ // the Groq note arrives seconds after its action
+      const a = actRows.find(x => x.at === data.at && x.type === data.type);
+      if (a){ a.aiNote = data.aiNote; paintActs(); }
+    }
+  }
+  function connectLive(){ if (!PROXY && token) startWs(); }
+  function startWs(){
+    let opened = false;
+    try{
+      const wsBase = (GW || location.origin).replace(/^http/, "ws");
+      ws = new WebSocket(`${wsBase}/ws?token=${encodeURIComponent(token)}`);
+    }catch{ return startSse(); }
+    ws.onopen = () => { opened = true; setLive("live", false, "websocket"); };
+    ws.onmessage = (m) => { const { type, data } = JSON.parse(m.data); onLiveMsg(type, data); };
+    ws.onclose = () => { ws = null; opened ? setTimeout(startWs, 1500) : startSse(); }; // retry, or fall back
+  }
+  function startSse(){
+    if (es) return;
+    es = new EventSource(`${GW}/v1/admin/live?token=${encodeURIComponent(token)}`);
+    for (const t of ["stats", "decision", "action", "action_note"]){
+      es.addEventListener(t, e => { onLiveMsg(t, JSON.parse(e.data)); if (t === "stats") setLive("live", false, "sse"); });
+    }
+    es.onerror = () => setLive("reconnecting…", true);
+  }
+  function setLive(msg, err, transport){
+    $("statusbar").classList.toggle("err", !!err);
+    $("liveTxt").textContent = msg;
+    if (transport) $("transport").textContent = transport;
+  }
+
+  // ---------- the traffic chart: smooth gradient area on canvas ----------
+  let lastSeries = [];
+  function hexA(hex, a){ // "#rrggbb" -> rgba(): canvas gradients need alpha stops
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function drawChart(series){
+    if (!series?.length) return;
+    lastSeries = series;
+    const c = $("chartCanvas"), ctx = c.getContext("2d");
+    const dpr = devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+    c.width = W * dpr; c.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const css = getComputedStyle(rootEl);
+    const teal = css.getPropertyValue("--teal").trim(), rose = css.getPropertyValue("--rose").trim(), faint = css.getPropertyValue("--faint").trim();
+    const pad = { l: 6, r: 6, t: 16, b: 16 }, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const totals = series.map(b => b.allowed + b.blocked), blocked = series.map(b => b.blocked);
+    const peak = Math.max(4, ...totals);
+    const X = i => pad.l + iw * (i / (series.length - 1));
+    const Y = v => pad.t + ih * (1 - v / peak);
+
+    ctx.strokeStyle = faint; ctx.globalAlpha = .3; ctx.setLineDash([2, 6]); ctx.lineWidth = 1;
+    for (let g = 1; g <= 3; g++){ const y = pad.t + ih * g / 4; ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke(); }
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+    function smooth(vals){ // midpoint-quadratic: bar data reads as a calm wave
+      ctx.beginPath();
+      vals.forEach((v, i) => {
+        const x = X(i), y = Y(v);
+        if (i === 0) return ctx.moveTo(x, y);
+        const px = X(i - 1), py = Y(vals[i - 1]);
+        ctx.quadraticCurveTo(px, py, (px + x) / 2, (py + y) / 2);
+      });
+      ctx.lineTo(X(vals.length - 1), Y(vals.at(-1)));
+    }
+    function areaFill(vals, color, top, bottom){
+      smooth(vals);
+      ctx.lineTo(X(vals.length - 1), H - pad.b); ctx.lineTo(pad.l, H - pad.b); ctx.closePath();
+      const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
+      grad.addColorStop(0, hexA(color, top)); grad.addColorStop(1, hexA(color, bottom));
+      ctx.fillStyle = grad; ctx.fill();
+    }
+
+    areaFill(totals, teal, .32, .02); // allowed+blocked envelope
+    smooth(totals); ctx.strokeStyle = teal; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke();
+    if (blocked.some(v => v > 0)){
+      areaFill(blocked, rose, .45, .04); // the blocked layer rises from the floor
+      smooth(blocked); ctx.strokeStyle = hexA(rose, .9); ctx.lineWidth = 1.5; ctx.stroke();
+    }
+    // live tip: a solid dot with a soft ring, no blur tricks
+    const tx = X(totals.length - 1), ty = Y(totals.at(-1));
+    ctx.beginPath(); ctx.arc(tx, ty, 3, 0, 7); ctx.fillStyle = teal; ctx.fill();
+    ctx.beginPath(); ctx.arc(tx, ty, 6.5, 0, 7); ctx.strokeStyle = hexA(teal, .35); ctx.lineWidth = 2; ctx.stroke();
+
+    ctx.font = "10px ui-monospace,monospace"; ctx.fillStyle = faint;
+    ctx.fillText("60s ago", pad.l + 2, H - 4);
+    const nowLbl = "now"; ctx.fillText(nowLbl, W - pad.r - ctx.measureText(nowLbl).width - 2, H - 4);
+    const rate = `${totals.at(-1)} req/s`; ctx.fillStyle = teal;
+    ctx.fillText(rate, W - pad.r - ctx.measureText(rate).width - 2, pad.t - 5);
+  }
+  addEventListener("resize", () => drawChart(lastSeries));
+
+  async function tick(){ // fallback + initial hydrate (proxy mode polls forever)
+    if (!PROXY && !token) return;
+    try{
+      const [stats, audit, acts] = await Promise.all([fetchJson("/stats"), fetchJson("/audit"), fetchJson("/automations")]);
+      paintStats(stats);
+      feedRows.length = 0; feedRows.push(...audit); paintFeed();
+      const list = acts.actions ?? acts; actRows.length = 0; actRows.push(...list); paintActs();
+      if (PROXY) setLive("live", false, "polling");
+    }catch{ setLive(PROXY && !adminKey ? "enter admin key above" : "gateway unreachable", true); }
+  }
+  if (PROXY){ tick(); pollTimer = setInterval(tick, 1500); }
+  else if (token){ enterUi(); tick(); connectLive(); }
+  if (token || PROXY){ refreshAutopilot(); setInterval(refreshAutopilot, 8000); }
+
+  // ---------- real-time management (admin) ----------
+  async function mgmt(action, tenantId){
+    await fetch(`${GW}/v1/admin/${action}`, { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+      body: JSON.stringify({ tenantId, seconds: 60 }) });
+  }
+  async function setTier(tenantId, tier){
+    await fetch(GW + "/v1/admin/tenants", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+      body: JSON.stringify({ tenantId, tier }) });
+  }
+
+  // ---------- manual site onboarding ----------
+  let snipText = "";
+  async function addSite(){
+    const name = $("siteName").value.trim();
+    if (!name) return;
+    const r = await fetch(GW + "/v1/admin/sites", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+      body: JSON.stringify({ name, tier: $("siteTier").value }) });
+    const data = await r.json();
+    const box = $("snippet"); box.style.display = "block";
+    if (!r.ok){ $("snipLbl").textContent = `could not connect: ${data.error}`; $("snipCode").textContent = ""; return; }
+    snipText = data.beacon.replace("http://localhost:3000", location.origin); // snippet points at THIS gateway
+    $("snipLbl").textContent = `${data.site} · ${data.tier} · key ${data.apiKey} · paste into the site:`;
+    $("snipCode").textContent = snipText;
+    $("siteName").value = "";
+  }
+  async function copySnip(){ await navigator.clipboard.writeText(snipText); }
+  async function removeSite(tenantId){
+    await fetch(GW + "/v1/admin/sites/remove", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+      body: JSON.stringify({ tenantId }) });
+  }
+
+  // ---------- traffic generators ----------
+  const hit = (key, path) => fetch(GW + path, { headers: key ? { "x-api-key": key } : {} });
+  const scan = key => fetch(GW + "/v1/demo/nsfw-check", { method: "POST", headers: { "content-type": "application/json", ...(key ? { "x-api-key": key } : {}) }, body: JSON.stringify({ text: "dashboard demo text" }) });
+  async function storm(){ for (let i = 0; i < 12; i++) await scan(null); }
+  setInterval(() => {
+    if (!$("autoT").checked) return;
+    Math.random() < 0.75 ? hit(null, "/v1/demo/ping") : scan(null);
+  }, 900);
+
+  // ---------- visitor map (Leaflet + CARTO tiles, theme-aware) ----------
+  if (GW) $("admLink").href = GW + "/admin";
+  // one world, no infinite repeat (noWrap), but bounds loose enough that the
+  // map never force-zooms into a strip. We center on where traffic actually is.
+  const lmap = L.map("map", { zoomControl: true, attributionControl: false, worldCopyJump: false, minZoom: 1, maxZoom: 12 }).setView([20, 0], 1.5);
+  lmap.setMaxBounds([[-85, -180], [85, 180]]);
+  let tiles = null, hasFit = false;
+  function setTiles(){
+    if (tiles) lmap.removeLayer(tiles);
+    const dark = rootEl.dataset.theme === "dark";
+    tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, { maxZoom: 18, noWrap: true }).addTo(lmap);
+  }
+  setTiles();
+  const markers = L.layerGroup().addTo(lmap);
+  let heat = null, mapMode = "heat", lastVisitors = [];
+  const LABEL_COLOR = { human: "#2dd4bf", ai_agent: "#38bdf8", crawler: "#fbbf24", retry_bug: "#fb7185", warming: "#94a3b8" };
+  function setMapMode(m){
+    mapMode = m;
+    $("heatBtn").classList.toggle("on", m === "heat");
+    $("ptBtn").classList.toggle("on", m === "points");
+    $("globeBtn").classList.toggle("on", m === "globe");
+    const globe = m === "globe";
+    $("map").style.display = globe ? "none" : "block";
+    $("globe").style.display = globe ? "block" : "none";
+    if (globe){ initGlobe(); drawGlobe(lastVisitors); } else updateMap(lastVisitors);
+  }
+  function updateMap(vs){
+    lastVisitors = vs;
+    markers.clearLayers();
+    if (heat){ lmap.removeLayer(heat); heat = null; }
+    let located = 0;
+    const heatPts = [];
+    for (const v of vs){
+      if (typeof v.lat !== "number") continue;
+      located++;
+      // request count -> heat weight; IP is LOCKED to its geolocation.
+      heatPts.push([v.lat, v.lon, Math.min(0.3 + Math.log2(v.count + 1) * 0.25, 1)]);
+      if (mapMode === "points"){
+        const col = LABEL_COLOR[v.label] ?? "#2dd4bf";
+        L.circleMarker([v.lat, v.lon], {
+          radius: Math.min(5 + Math.log2(v.count + 1) * 2, 16),
+          color: col, weight: 1.5, fillColor: col, fillOpacity: .5,
+        }).bindPopup(`<b>${v.ip}</b><br>${v.city ?? "?"}, ${v.country ?? "?"}<br>${v.count} requests${v.label ? `<br>behavior: ${v.label.replace("_"," ")}` : ""}`).addTo(markers);
+      }
+    }
+    if (mapMode === "heat" && heatPts.length && L.heatLayer){
+      heat = L.heatLayer(heatPts, { radius: 26, blur: 18, maxZoom: 6,
+        gradient: { 0.2: "#0ea5e9", 0.5: "#2dd4bf", 0.8: "#fbbf24", 1: "#fb7185" } }).addTo(lmap);
+    }
+    const local = vs.filter(v => v.geo === "local").length;
+    $("visMeta").textContent = `${vs.length} unique · ${located} located${local ? ` · ${local} local` : ""}`;
+    // frame the map on the real traffic the first time we have any (don't
+    // yank it afterwards — the operator may have panned).
+    if (!hasFit && located > 0){
+      const pts = vs.filter(v => typeof v.lat === "number").map(v => [v.lat, v.lon]);
+      if (pts.length === 1) lmap.setView(pts[0], 4);
+      else lmap.fitBounds(pts, { padding: [40, 40], maxZoom: 6 });
+      hasFit = true;
+    }
+  }
+
+  // ---------- 3D globe: visitors as glowing pins on a rotating sphere ----------
+  let G = null; // { renderer, scene, cam, sphere, pins }
+  function latLonToXYZ(lat, lon, r){
+    const phi = (90 - lat) * Math.PI / 180, theta = (lon + 180) * Math.PI / 180;
+    return [-r * Math.sin(phi) * Math.cos(theta), r * Math.cos(phi), r * Math.sin(phi) * Math.sin(theta)];
+  }
+  async function initGlobe(){
+    if (G || !window.THREE_NS) { if (!window.THREE_NS) await loadThree(); }
+    if (G) return;
+    const THREE = window.THREE_NS, el = $("globe");
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(el.clientWidth, el.clientHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    el.innerHTML = ""; el.appendChild(renderer.domElement);
+    const scene = new THREE.Scene();
+    const cam = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, .1, 100);
+    cam.position.z = 260;
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(90, 48, 48),
+      new THREE.MeshBasicMaterial({ color: 0x0b3a4a, transparent: true, opacity: .55 }));
+    const wire = new THREE.LineSegments(new THREE.WireframeGeometry(new THREE.SphereGeometry(90.4, 24, 18)),
+      new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: .14 }));
+    const grp = new THREE.Group(); grp.add(sphere); grp.add(wire); scene.add(grp);
+    const pins = new THREE.Group(); grp.add(pins);
+    G = { THREE, renderer, scene, cam, grp, pins, el };
+    (function spin(){ if (!G) return; requestAnimationFrame(spin); grp.rotation.y += .0016; renderer.render(scene, cam); })();
+    addEventListener("resize", () => { if (G){ renderer.setSize(el.clientWidth, el.clientHeight); cam.aspect = el.clientWidth/el.clientHeight; cam.updateProjectionMatrix(); } });
+  }
+  function loadThree(){
+    return new Promise(res => {
+      import("https://unpkg.com/three@0.160.0/build/three.module.js").then(m => { window.THREE_NS = m; res(); });
+    });
+  }
+  const GLOBE_COLOR = { human: 0x2dd4bf, ai_agent: 0x38bdf8, crawler: 0xfbbf24, retry_bug: 0xfb7185, warming: 0x94a3b8 };
+  function drawGlobe(vs){
+    if (!G) return;
+    const THREE = G.THREE;
+    while (G.pins.children.length) G.pins.remove(G.pins.children[0]);
+    for (const v of vs){
+      if (typeof v.lat !== "number") continue;
+      const [x,y,z] = latLonToXYZ(v.lat, v.lon, 91);
+      const h = Math.min(6 + Math.log2(v.count + 1) * 5, 34);
+      const col = GLOBE_COLOR[v.label] ?? 0x2dd4bf;
+      const pin = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, h, 6), new THREE.MeshBasicMaterial({ color: col }));
+      const [ox,oy,oz] = latLonToXYZ(v.lat, v.lon, 91 + h/2);
+      pin.position.set(ox, oy, oz);
+      pin.lookAt(0,0,0); pin.rotateX(Math.PI/2);
+      G.pins.add(pin);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(2.4, 8, 8), new THREE.MeshBasicMaterial({ color: col }));
+      const [tx,ty,tz] = latLonToXYZ(v.lat, v.lon, 91 + h);
+      dot.position.set(tx,ty,tz); G.pins.add(dot);
+    }
+  }
+
+  // ---------- autopilot state: prove it is armed and show what it does --------
+  async function refreshAutopilot(){
+    try{
+      const st = await fetchJson("/autopilot");
+      $("apRules").innerHTML = st.rules.map(r =>
+        `<span class="aprule ${r.kind.startsWith("ai") ? "ai" : ""}${r.kind.includes("offline") ? " off" : ""}" title="${r.trigger}"><i></i>${r.name}</span>`
+      ).join("");
+      $("apState").textContent = `${st.activeBans.length} active ban${st.activeBans.length===1?"":"s"} · ${st.totalActions} actions`;
+    }catch{}
+  }
+
+  // ---------- AI chat (Groq, grounded in live gateway state) ----------
+  const chatHistory = [];
+  $("chatFab").onclick = () => { $("chatbox").classList.toggle("open"); $("chatInput").focus(); };
+  $("chatInput").addEventListener("keydown", e => { if (e.key === "Enter") sendChat(); });
+  function addMsg(role, text){
+    const div = document.createElement("div");
+    div.className = "m " + (role === "user" ? "user" : "ai");
+    div.textContent = text;
+    $("chatlog").appendChild(div);
+    $("chatlog").scrollTop = $("chatlog").scrollHeight;
+    return div;
+  }
+  async function sendChat(){
+    const q = $("chatInput").value.trim();
+    if (!q) return;
+    $("chatInput").value = "";
+    addMsg("user", q);
+    chatHistory.push({ role: "user", content: q });
+    const thinking = addMsg("ai", "…");
+    try{
+      const r = await fetch(GW + "/v1/ai/chat", { method: "POST", headers: { "content-type": "application/json", ...HDRS() },
+        body: JSON.stringify({ messages: chatHistory }) });
+      const d = await r.json();
+      thinking.textContent = d.reply ?? "no answer";
+      if (d.sources?.length){ // RAG receipts: the actual documents it read
+        const src = document.createElement("div");
+        src.className = "srcs";
+        src.textContent = d.sources.slice(0, 3).map(h => `⌕ ${h.text.slice(0, 90)}`).join("\n");
+        thinking.appendChild(src);
+      }
+      chatHistory.push({ role: "assistant", content: d.reply ?? "" });
+      if (chatHistory.length > 16) chatHistory.splice(0, 2);
+    }catch{ thinking.textContent = "network error"; }
+  }
+</script>
+</body>
+</html>

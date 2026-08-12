@@ -6,3 +6,10 @@ site/.vercel/
 .tenants.json
 .orgs.json
 .memory.jsonl
+
+# macOS
+.DS_Store
+
+# Go build output
+/limitplane
+coverage.out

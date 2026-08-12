@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push makes an in-flight run obsolete; cancel it rather than pay for
+# a result nobody will read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26"
+
+jobs:
+  build:
+    name: Build & vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l ./cmd ./internal ./web)
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt'd:"
+            echo "$unformatted"
+            gofmt -d ./cmd ./internal ./web
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      # The project's whole premise is that it has no third-party dependencies.
+      # A lockfile check is the only thing that keeps that true over time.
+      - name: Assert zero third-party dependencies
+        run: |
+          if grep -q '^require' go.mod; then
+            echo "::error::go.mod gained a dependency — LimitPlane is stdlib-only by design."
+            cat go.mod
+            exit 1
+          fi
+          test ! -f go.sum || [ ! -s go.sum ] || { echo "::error::go.sum is non-empty"; exit 1; }
+          echo "stdlib only ✓"
+
+  test:
+    name: Test (race + coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # -race is not optional here. The whole risk of porting off Node's single
+      # threaded event loop is that maps which were safe by accident become
+      # shared mutable state, and the race detector is what proves they aren't.
+      - name: Unit + integration tests (race detector)
+        run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Coverage summary
+        run: |
+          go tool cover -func=coverage.out | tail -1
+          {
+            echo "### Coverage"
+            echo '```'
+            go tool cover -func=coverage.out | grep -E 'limitplane/internal|total:'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  smoke:
+    name: Smoke test the real binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Tests exercise the handler; this proves the SHIPPED ARTEFACT boots,
+      # embeds its dashboard, and rate-limits real traffic over a real socket.
+      - name: Build binary
+        run: go build -o /tmp/limitplane ./cmd/gateway
+
+      - name: Boot and exercise
+        run: |
+          set -euo pipefail
+          DATA_DIR=$(mktemp -d) PORT=3000 JWT_SECRET=ci-smoke /tmp/limitplane &
+          for i in $(seq 1 40); do
+            curl -sf localhost:3000/healthz >/dev/null && break
+            sleep 0.25
+          done
+          curl -sf localhost:3000/healthz | tee /dev/stderr | grep -q '"ok": true'
+
+          echo "--- dashboard is embedded in the binary ---"
+          curl -sf localhost:3000/dashboard | grep -qi '<html'
+
+          echo "--- an anonymous client is limited after 10 light requests ---"
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/v1/demo/ping)
+            [ "$code" = "200" ] || { echo "request $i returned $code, expected 200"; exit 1; }
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/v1/demo/ping)
+          [ "$code" = "429" ] || { echo "11th request returned $code, expected 429"; exit 1; }
+
+          echo "--- admin routes are refused without a token ---"
+          code=$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/v1/admin/stats)
+          [ "$code" = "401" ] || { echo "unauthenticated admin returned $code, expected 401"; exit 1; }
+
+          echo "smoke test passed ✓"
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: limitplane:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run the image and health check it
+        run: |
+          docker run -d --name lp -p 3000:3000 -e JWT_SECRET=ci limitplane:ci
+          for i in $(seq 1 40); do
+            curl -sf localhost:3000/healthz >/dev/null && break
+            sleep 0.25
+          done
+          curl -sf localhost:3000/healthz
+          docker logs lp
+          docker rm -f lp

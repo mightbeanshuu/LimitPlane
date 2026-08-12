@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LimitPlane · Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#eef2f8; --ink:#1c2940; --dim:#5d6b84; --faint:#93a0b6;
+    --sky:#0284c7; --teal:#0d9488; --rose:#e11d48; --amber:#d97706;
+    --glass:rgba(255,255,255,.58); --glass-edge:rgba(255,255,255,.85);
+    --inner:rgba(255,255,255,.55); --line:rgba(28,41,64,.08);
+    --shadow-dark:rgba(163,177,198,.5); --shadow-light:rgba(255,255,255,.95);
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --display:'Bricolage Grotesque',-apple-system,sans-serif;
+    --wash1:rgba(56,189,248,.14); --wash2:rgba(45,212,191,.12);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b1120; --ink:#e2e8f0; --dim:#94a3b8; --faint:#5d6b84;
+    --sky:#38bdf8; --teal:#2dd4bf; --rose:#fb7185; --amber:#fbbf24;
+    --glass:rgba(17,26,46,.58); --glass-edge:rgba(148,163,184,.16);
+    --inner:rgba(15,23,42,.55); --line:rgba(148,163,184,.1);
+    --shadow-dark:rgba(0,0,0,.55); --shadow-light:rgba(148,163,184,.06);
+    --wash1:rgba(56,189,248,.08); --wash2:rgba(45,212,191,.06);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);min-height:100vh;font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
+  body::before{content:"";position:fixed;inset:0;z-index:-1;background:
+    radial-gradient(600px 400px at 8% -5%,var(--wash1),transparent 65%),
+    radial-gradient(560px 420px at 95% 105%,var(--wash2),transparent 65%)}
+  a{color:var(--sky);text-decoration:none}
+  .glass{background:var(--glass);backdrop-filter:blur(18px) saturate(1.5);-webkit-backdrop-filter:blur(18px) saturate(1.5);border:1px solid var(--glass-edge);border-radius:18px;box-shadow:0 10px 34px rgba(15,25,55,.09)}
+  .neo{background:var(--bg);border-radius:16px;box-shadow:6px 6px 13px var(--shadow-dark),-6px -6px 13px var(--shadow-light)}
+  .neo-in{background:var(--bg);border-radius:12px;box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+
+  .shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+  @media(max-width:820px){.shell{grid-template-columns:1fr}.side{display:none}}
+  .side{padding:22px 16px;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+  .side .brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:700;font-size:16px;letter-spacing:.05em;padding:6px 10px 20px}
+  .side .brand img{width:30px;height:30px;border-radius:8px}
+  .side .brand .p{color:var(--sky)}
+  .navlink{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:12px;color:var(--dim);font-weight:600;font-size:13.5px;cursor:pointer}
+  .navlink.on{background:var(--inner);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+  .navlink:hover{color:var(--ink)}
+  .navlink .ic{width:7px;height:7px;border-radius:2px;background:var(--faint)}
+  .navlink.on .ic{background:var(--sky)}
+  .side .foot{margin-top:auto;font:11px var(--mono);color:var(--faint);padding:10px 12px;line-height:1.8}
+
+  main{padding:26px 30px 60px;max-width:1080px}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+  .topbar h1{font-family:var(--display);font-size:22px;font-weight:700}
+  .topbar .right{display:flex;gap:10px;align-items:center}
+  .iconbtn{width:36px;height:36px;border:none;border-radius:11px;cursor:pointer;background:var(--bg);color:var(--ink);font-size:14px;box-shadow:5px 5px 11px var(--shadow-dark),-5px -5px 11px var(--shadow-light)}
+  .userchip{display:flex;align-items:center;gap:9px;padding:6px 8px 6px 6px;font:12px var(--mono);color:var(--dim)}
+  .avatar{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 12px var(--display);color:#fff;background:linear-gradient(135deg,var(--sky),var(--teal))}
+  .userchip b{color:var(--ink)}
+  .userchip button{border:none;cursor:pointer;font:600 11px var(--mono);color:var(--rose);background:transparent;padding:5px 7px}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:24px}
+  .kpi{padding:16px 18px}
+  .kpi .lbl{font:11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+  .kpi .val{font-family:var(--display);font-size:27px;font-weight:700;margin-top:3px}
+
+  .panel{padding:20px 22px;margin-bottom:20px}
+  .panel h2{font-family:var(--display);font-size:15.5px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .panel h2 span{font:11px var(--mono);color:var(--faint);font-weight:400}
+
+  .org{border:1px solid var(--line);border-radius:14px;margin-bottom:14px;overflow:hidden;background:var(--inner)}
+  .org-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:15px 18px;cursor:pointer}
+  .org-head .nm{font-family:var(--display);font-weight:700;font-size:15px}
+  .org-head .meta{font:11.5px var(--mono);color:var(--faint)}
+  .org-body{display:none;padding:4px 18px 18px;border-top:1px solid var(--line)}
+  .org.open .org-body{display:block}
+  .sec{font:11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin:14px 0 8px}
+  .memrow,.siterow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--glass);border:1px solid var(--glass-edge);margin-bottom:7px;font:12.5px var(--mono)}
+  .memrow .who{color:var(--ink)} .siterow .who{color:var(--ink)}
+  .chip{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border-radius:99px}
+  .chip.owner{background:rgba(217,119,6,.14);color:var(--amber)}
+  .chip.admin{background:rgba(2,132,199,.15);color:var(--sky)}
+  .chip.viewer{background:rgba(120,130,150,.15);color:var(--dim)}
+  .chip.free{background:rgba(120,130,150,.15);color:var(--dim)}
+  .chip.pro{background:rgba(2,132,199,.15);color:var(--sky)}
+  .chip.enterprise{background:rgba(13,148,136,.16);color:var(--teal)}
+  .x{border:none;background:transparent;color:var(--faint);cursor:pointer;font:600 11px var(--mono)}
+  .x:hover{color:var(--rose)}
+  .formrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .formrow input,.formrow select{border:none;font:12.5px var(--mono);color:var(--ink);padding:10px 12px;border-radius:10px;background:var(--bg);outline:none;box-shadow:inset 3px 3px 8px var(--shadow-dark),inset -3px -3px 8px var(--shadow-light)}
+  .formrow input{flex:1;min-width:140px}
+  .btn{border:none;cursor:pointer;font:600 12px var(--mono);color:var(--sky);padding:10px 16px;border-radius:11px;background:var(--bg);box-shadow:4px 4px 10px var(--shadow-dark),-4px -4px 10px var(--shadow-light)}
+  .btn:active{box-shadow:inset 3px 3px 7px var(--shadow-dark),inset -3px -3px 7px var(--shadow-light)}
+  .snip{display:none;margin-top:10px}
+  .snip pre{background:#0a0f1d;color:#e2e8f0;border-radius:10px;padding:12px 14px;font:11.5px/1.6 var(--mono);white-space:pre-wrap;word-break:break-all}
+  .snip .lbl{font:11px var(--mono);color:var(--dim)}
+  .note{font:12px var(--mono);color:var(--faint);padding:8px 2px}
+  .userrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 14px;border-radius:11px;background:var(--inner);border:1px solid var(--line);margin-bottom:8px;font:12.5px var(--mono)}
+  .userrow .em{color:var(--ink)} .userrow .orgs{color:var(--faint);font-size:11px}
+
+  #gate{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;background:var(--bg)}
+  .gatecard{width:min(400px,92vw);padding:34px 32px;text-align:center}
+  .gatecard h1{font-family:var(--display);font-size:20px;margin-bottom:6px}
+  .gatecard p{color:var(--dim);font-size:13px;margin-bottom:20px}
+  .field{display:block;width:100%;margin-bottom:12px;padding:13px 15px;border:none;border-radius:13px;background:var(--bg);color:var(--ink);font:13.5px var(--mono);outline:none;box-shadow:inset 4px 4px 9px var(--shadow-dark),inset -4px -4px 9px var(--shadow-light)}
+  .gbtn{width:100%;border:none;cursor:pointer;padding:14px;border-radius:13px;font:600 14px inherit;color:#fff;background:linear-gradient(90deg,var(--sky),var(--teal))}
+  .lerr{color:var(--rose);font:11.5px var(--mono);min-height:16px;margin-top:8px}
+  .hint{margin-top:12px;font:11px var(--mono);color:var(--faint)}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="gatecard glass">
+    <h1>LIMIT<span style="color:var(--sky)">PLANE</span> · admin</h1>
+    <p>Sign in</p>
+    <input class="field" id="gEmail" type="email" placeholder="email">
+    <input class="field" id="gPass" type="password" placeholder="password">
+    <button class="gbtn" onclick="gateLogin()">Log in</button>
+    <div class="lerr" id="gErr"></div>
+    <div class="hint">platform: demo@limitplane.dev · demo123</div>
+  </div>
+</div>
+
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><img src="/logo.svg" alt="">LIMIT<span class="p">PLANE</span></div>
+    <div class="navlink on" id="navOrgs" onclick="showView('orgs')"><span class="ic"></span>Organizations</div>
+    <div class="navlink" id="navUsers" onclick="showView('users')"><span class="ic"></span>Users</div>
+    <a class="navlink" href="/dashboard"><span class="ic"></span>Live dashboard</a>
+    <a class="navlink" href="https://limitplane.vercel.app"><span class="ic"></span>Website</a>
+    <div class="foot">gateway admin<br><span id="footWho"></span></div>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <h1 id="title">Organizations</h1>
+      <div class="right">
+        <button class="iconbtn" id="themeBtn" title="toggle theme">◐</button>
+        <div class="userchip glass"><span class="avatar" id="avatar"></span><b id="whoami"></b><button onclick="logout()">logout</button></div>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="panel glass">
+      <h2>Create an organization</h2>
+      <div class="formrow">
+        <input id="newOrgName" placeholder="organization name, e.g. Anshu Labs">
+        <button class="btn" onclick="createOrg()">Create org</button>
+      </div>
+    </div>
+
+    <div class="panel glass">
+      <h2 id="orgsTitle">All organizations <span></span></h2>
+      <div id="orgs"><div class="note">loading…</div></div>
+    </div>
+
+    <div id="usersView" style="display:none">
+      <div class="panel glass">
+        <h2>Create a user <span>an account that can be added to organizations</span></h2>
+        <div class="formrow">
+          <input id="newUserEmail" placeholder="email"><input id="newUserPass" placeholder="password" type="password">
+          <button class="btn" onclick="createUser()">Create user</button>
+        </div>
+      </div>
+      <div class="panel glass">
+        <h2>All users <span id="userCount"></span></h2>
+        <div id="usersList"><div class="note">loading…</div></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  // theme, shared with the rest of the product
+  const rootEl = document.documentElement;
+  rootEl.dataset.theme = localStorage.getItem("lp_theme") ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.getElementById("themeBtn").onclick = () => {
+    rootEl.dataset.theme = rootEl.dataset.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("lp_theme", rootEl.dataset.theme);
+  };
+
+  const $ = id => document.getElementById(id);
+  let token = localStorage.getItem("lp_token") ?? "";
+  const user = () => localStorage.getItem("lp_user") ?? "user";
+  const HDRS = () => ({ authorization: "Bearer " + token, "content-type": "application/json" });
+
+  async function gateLogin(){
+    const r = await fetch("/v1/auth/login", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: $("gEmail").value.trim(), password: $("gPass").value }) });
+    if (!r.ok){ $("gErr").textContent = "wrong credentials"; return; }
+    const s = await r.json();
+    token = s.token;
+    localStorage.setItem("lp_token", token);
+    localStorage.setItem("lp_role", s.role);
+    localStorage.setItem("lp_user", $("gEmail").value.trim());
+    boot();
+  }
+  function logout(){ ["lp_token","lp_role","lp_user"].forEach(k => localStorage.removeItem(k)); location.reload(); }
+  $("gPass").addEventListener("keydown", e => { if (e.key === "Enter") gateLogin(); });
+
+  let PLATFORM = false, ORGS = [], STATS = null;
+  const open = new Set(); // which org cards are expanded
+
+  async function api(path, body){
+    const r = await fetch(path, body ? { method: "POST", headers: HDRS(), body: JSON.stringify(body) } : { headers: HDRS() });
+    if (r.status === 401){ logout(); return null; }
+    return { ok: r.ok, data: await r.json() };
+  }
+
+  async function refresh(){
+    const [orgsRes, statsRes] = await Promise.all([api("/v1/admin/orgs"), api("/v1/admin/stats")]);
+    if (!orgsRes) return;
+    PLATFORM = orgsRes.data.platform;
+    ORGS = orgsRes.data.orgs;
+    STATS = statsRes?.ok ? statsRes.data : null;
+    paint();
+  }
+
+  const fmt = n => n >= 1000 ? (n/1000).toFixed(1) + "k" : String(n ?? 0);
+  const tierOf = id => STATS?.tenants.find(t => t.tenantId === id);
+
+  function paint(){
+    $("footWho").textContent = user();
+    $("whoami").textContent = user().split("@")[0];
+    $("avatar").textContent = user()[0].toUpperCase();
+    $("orgsTitle").firstChild.textContent = PLATFORM ? "All organizations " : "Your organizations ";
+
+    const members = ORGS.reduce((a,o) => a + Object.keys(o.members).length, 0);
+    const sites = ORGS.reduce((a,o) => a + o.sites.length, 0);
+    $("kpis").innerHTML = [
+      ["Organizations", ORGS.length], ["Members", members], ["Connected sites", sites],
+      ["Checks today", fmt(STATS?.totals.checks)], ["Blocked", fmt(STATS?.totals.blocked)],
+    ].map(([l,v]) => `<div class="kpi neo"><div class="lbl">${l}</div><div class="val">${v}</div></div>`).join("");
+
+    if (!ORGS.length){ $("orgs").innerHTML = '<div class="note">No organizations yet — create one above.</div>'; return; }
+    $("orgs").innerHTML = ORGS.map(o => {
+      const canManage = PLATFORM || ["owner","admin"].includes(o.role);
+      const mem = Object.entries(o.members).map(([email, role]) => `
+        <div class="memrow"><span class="who">${email}</span>
+          <span style="display:flex;gap:8px;align-items:center"><span class="chip ${role}">${role}</span>
+          ${canManage ? `<button class="x" onclick="removeMember('${o.id}','${email}')">remove</button>` : ""}</span></div>`).join("")
+        || '<div class="note">no members</div>';
+      const sit = o.sites.map(sid => {
+        const t = tierOf(sid);
+        return `<div class="siterow"><span class="who">${sid}</span>
+          <span style="display:flex;gap:8px;align-items:center">
+          ${t ? `<span class="chip ${t.tier}">${t.tier}</span><span style="color:var(--faint)">${fmt(t.monthly?.used)} / ${fmt(t.monthly?.quota)} u</span>` : `<span style="color:var(--faint)">no traffic yet</span>`}
+          ${canManage ? `<button class="x" onclick="removeSite('${sid}')">disconnect</button>` : ""}</span></div>`;
+      }).join("") || '<div class="note">no sites connected</div>';
+
+      return `<div class="org ${open.has(o.id) ? "open" : ""}">
+        <div class="org-head" onclick="toggleOrg('${o.id}')">
+          <span class="nm">${o.name}</span>
+          <span class="meta">${Object.keys(o.members).length} members · ${o.sites.length} sites ${o.role ? "· you: " + o.role : ""}</span>
+        </div>
+        <div class="org-body">
+          <div class="sec">Members</div>${mem}
+          ${canManage ? `<div class="formrow">
+            <input id="me_${o.id}" placeholder="email">
+            <input id="mp_${o.id}" placeholder="password (new users)" type="password">
+            <select id="mr_${o.id}"><option>viewer</option><option>admin</option><option>owner</option></select>
+            <button class="btn" onclick="addMember('${o.id}')">Add member</button>
+          </div>` : ""}
+          <div class="sec">Sites</div>${sit}
+          ${canManage ? `<div class="formrow">
+            <input id="sn_${o.id}" placeholder="site name, e.g. myapp.vercel.app">
+            <select id="st_${o.id}"><option>free</option><option>pro</option><option>enterprise</option></select>
+            <button class="btn" onclick="connectSite('${o.id}')">Connect site</button>
+          </div>
+          <div class="snip" id="snip_${o.id}"><span class="lbl" id="sniplbl_${o.id}"></span><pre id="snipcode_${o.id}"></pre></div>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  function toggleOrg(id){ open.has(id) ? open.delete(id) : open.add(id); paint(); }
+
+  let view = "orgs";
+  function showView(v){
+    view = v;
+    $("navOrgs").classList.toggle("on", v === "orgs");
+    $("navUsers").classList.toggle("on", v === "users");
+    document.querySelector("#orgs").parentElement.style.display = v === "orgs" ? "block" : "none";
+    document.querySelector(".panel.glass").style.display = v === "orgs" ? "block" : "none"; // create-org card
+    $("usersView").style.display = v === "users" ? "block" : "none";
+    $("title").textContent = v === "users" ? "Users" : "Organizations";
+    if (v === "users") loadUsers();
+  }
+  async function loadUsers(){
+    const r = await api("/v1/admin/users");
+    if (!r?.ok) return;
+    const us = r.data.users;
+    $("userCount").textContent = us.length + " total";
+    $("usersList").innerHTML = us.map(u => `<div class="userrow">
+      <span><span class="em">${u.email}</span> <span class="chip ${u.platformRole==="admin"?"admin":"viewer"}">${u.kind==="platform"?u.platformRole:"member"}</span></span>
+      <span style="display:flex;gap:10px;align-items:center">
+        <span class="orgs">${(u.orgs??[]).map(o=>o.name+" ("+o.role+")").join(", ") || (u.kind==="platform"?"platform staff":"no orgs")}</span>
+        ${u.kind==="member" ? `<button class="x" onclick="removeUser('${u.email}')">delete</button>` : ""}
+      </span></div>`).join("") || '<div class="note">no users</div>';
+  }
+  async function createUser(){
+    const email = $("newUserEmail").value.trim(), password = $("newUserPass").value;
+    if (!email || !password) return;
+    await api("/v1/admin/users", { email, password });
+    $("newUserEmail").value = ""; $("newUserPass").value = "";
+    loadUsers();
+  }
+  async function removeUser(email){ await api("/v1/admin/users/remove", { email }); loadUsers(); }
+
+  async function createOrg(){
+    const name = $("newOrgName").value.trim();
+    if (!name) return;
+    const r = await api("/v1/admin/orgs", { name });
+    if (r?.ok){ $("newOrgName").value = ""; open.add(r.data.id); }
+    refresh();
+  }
+  async function addMember(orgId){
+    await api("/v1/admin/orgs/members", { orgId, email: $("me_"+orgId).value.trim(), password: $("mp_"+orgId).value, role: $("mr_"+orgId).value });
+    refresh();
+  }
+  async function removeMember(orgId, email){ await api("/v1/admin/orgs/members/remove", { orgId, email }); refresh(); }
+  async function connectSite(orgId){
+    const r = await api("/v1/admin/sites", { orgId, name: $("sn_"+orgId).value.trim(), tier: $("st_"+orgId).value });
+    if (r?.ok){
+      $("snip_"+orgId).style.display = "block";
+      $("sniplbl_"+orgId).textContent = `${r.data.site} connected · API key ${r.data.apiKey} · paste into the site:`;
+      $("snipcode_"+orgId).textContent = r.data.beacon.replace("http://localhost:3000", location.origin);
+      $("sn_"+orgId).value = "";
+      // open a dedicated management tab for the new site's live traffic
+      window.open(location.origin + "/dashboard#" + encodeURIComponent(r.data.site), "_blank");
+    }
+    refresh();
+  }
+  async function removeSite(tenantId){ await api("/v1/admin/sites/remove", { tenantId }); refresh(); }
+
+  function boot(){
+    if (!token){ $("gate").style.display = "flex"; return; }
+    $("gate").style.display = "none";
+    refresh();
+    setInterval(refresh, 5000); // management data: gentle refresh is plenty
+  }
+  boot();
+</script>
+</body>
+</html>
