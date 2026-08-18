@@ -50,10 +50,12 @@ readable OSS implementation.
    timing variance (humans are irregular, retry loops are metronomes), path
    entropy (crawlers sweep, humans cluster), burst shape, 429-reaction time
    (does it back off after a block? bots don't).
-2. **Classify** with plain scored rules first (deterministic-first): metronome
-   timing + zero backoff = retry-bug; high path entropy + steady rate = crawler;
-   irregular + backoff-aware = human. An ML upgrade slots behind the same
-   interface later.
+2. **Label** with hand-tuned thresholds — a heuristic, not a model, and it is
+   worth saying so: metronome timing + zero backoff = retry-bug; high path
+   entropy + steady rate = crawler; irregular + backoff-aware = human. Nothing
+   is trained and there is no evaluation, because there is no labelled data. A
+   real classifier could slot in behind the same interface later, but it would
+   need an eval harness before it earned the name.
 3. **Adaptive lanes**: instead of one bucket per tier, the classification picks
    a lane — humans get burst-friendly limits, agents get steady-throughput
    limits, retry-bugs get the existing cooldown, crawlers get a crawl-delay

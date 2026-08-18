@@ -13,9 +13,16 @@
 //	                respect Retry-After; retry bugs hammer on.
 //	block ratio     how much of their traffic are we already rejecting?
 //
-// Classification is scored rules — deterministic first, so it is debuggable by
-// reading; an ML model can swap in behind classify() later. The label picks an
-// ADAPTIVE LANE: the same tier limits, scaled to the behaviour.
+// WHAT THIS IS NOT: there is no model here. classify() is a hand-written
+// if/else over four thresholds, and the "confidence" it reports is a constant
+// literal picked per branch, not a probability. Nothing is trained, nothing is
+// fitted, and there is no evaluation — no labelled data, so no precision or
+// recall. Call it a heuristic, because that is what it is. The upside of a
+// heuristic is that it is debuggable by reading; a real classifier could swap
+// in behind classify() later, and would need an eval harness first.
+//
+// The label picks an ADAPTIVE LANE: the same tier limits, scaled to the
+// behaviour. There are five lanes and they are hardcoded below.
 package fingerprint
 
 import (
@@ -189,7 +196,9 @@ func classify(events []observation) Classification {
 		MeanGapMs:  int64(math.Round(mean)),
 	}
 
-	// Scored rules, most damning first.
+	// Hand-tuned thresholds, most damning first. The confidence numbers are
+	// literals chosen to rank the branches, NOT probabilities from a model —
+	// they say "we are surer about retry_bug than about human", nothing more.
 	switch {
 	case blockRatio > 0.4 && cv < 0.35 && !backsOff:
 		return Classification{Label: "retry_bug", Confidence: 0.9, Features: f} // metronome ignoring 429s

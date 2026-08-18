@@ -1,7 +1,18 @@
 # LimitPlane
 
-**An AI-aware rate-limiting layer you drop in front of any site.** Written in
-Go, with zero third-party dependencies.
+**A multi-tenant rate-limiting layer you drop in front of any site, which
+prices requests by how expensive they are rather than counting them.** Written
+in Go, with zero third-party dependencies.
+
+"AI-aware" here means exactly one thing, and it is worth pinning down before it
+sounds bigger than it is: a route carries a **cost class**, and an AI inference
+route spends 5 tokens from the same bucket where a health check spends 1. It is
+a price tag on a route, enforced by an ordinary token bucket. LimitPlane is not
+a GenAI gateway — it does not front OpenAI, Anthropic or Bedrock, and it has no
+provider routing, no prompt cache and no model failover. It does meter real
+tokens for **one** endpoint it owns (`/v1/ai/proxy` → Groq, see
+`internal/ai/tokenmeter.go`), which is a demonstration of the idea, not a
+product surface.
 
 Site: **https://limitplane.vercel.app** · Gateway: **https://limitplane.onrender.com**
 
@@ -32,48 +43,82 @@ cost class** and budgets them per **tenant + tier + route**.
 
 **Not for single-thread speed.** The Node original's README quoted ~181,000
 checks/sec, but that benchmark measured the *Redis* limiter over a socket — it
-was timing network round trips, not the limiter. Measured honestly, in memory,
-on the same machine (Apple M2):
+was timing network round trips, not the limiter.
 
-| | Throughput | ns/op | allocs/op |
-|---|---|---|---|
-| Node in-memory token bucket | ~22M checks/sec | 45 | 1 |
-| Go in-memory token bucket | ~18M checks/sec | 55 | **0** |
+### First, the number that actually matters
 
-Numbers are the floor of 5 runs at `-count=5` on an otherwise idle machine
-(serial 18.1–18.4M, parallel 24.2–25.7M). Benchmark a loaded laptop and you
-will get something else; re-run before quoting any of this.
+Two figures get quoted about this project, and only one of them is the service:
 
-Node is *faster* single-threaded. V8's JIT is very good at a monomorphic hot
-loop like this one. Pretending otherwise would not survive one follow-up
-question.
+| | | |
+|---|---:|---|
+| `TokenBucket.Check()`, in process, 1 core | **11.3M checks/sec** | the algorithm |
+| the same layer through real HTTP | **47k req/sec** | the service |
+
+They differ by 240×, and almost all of the difference is net/http and the
+kernel: a bare handler with no LimitPlane in front of it does 70k req/sec on
+this machine, so a third of the ceiling is gone before the gateway exists. **A
+rate limiter is never the bottleneck of an HTTP service.** Quote the 47k when
+somebody asks what the gateway does, and the 11.3M only when they ask about the
+admission algorithm. [BENCHMARKS.md](BENCHMARKS.md) has both tables, the
+no-middleware baseline that separates them, and the machine they were taken on.
+
+### Then, Go versus Node
+
+Measured in memory on the same machine, on the same day, best of 5 runs
+(Apple M2, go1.26.3, node v24.14.0):
+
+| Single-threaded | ns/op | checks/sec | allocs/op |
+|---|---:|---:|---:|
+| Node in-memory token bucket, 1 key | **78.9** | 12.7M | 1 |
+| Go in-memory token bucket, 1 key | 88.9 | 11.3M | **0** |
+| Node in-memory token bucket, 512 keys | **108.3** | 9.2M | 1 |
+| Go in-memory token bucket, 512 keys | 128.6 | 7.8M | **0** |
+
+Node is *faster* single-threaded, by 10–16%. V8's JIT is very good at a
+monomorphic hot loop like this one. Pretending otherwise would not survive one
+follow-up question, and the Node side is now runnable —
+`node bench/node_baseline.mjs` runs the deleted Node implementation verbatim.
+
+> An earlier version of this README claimed 22M for Node and 18M for Go. Neither
+> reproduces; both were roughly 2× optimistic. The direction was right, the
+> magnitudes were not.
 
 The Go argument is three other things:
 
-1. **That 22M is the ceiling for the entire Node process**, because JavaScript
-   runs one callback at a time. Go's number is per-core and aggregates — the
-   parallel benchmark sustains **over 24M checks/sec across 8 cores** while
-   serving traffic, and keeps climbing on a bigger box.
+1. **9.2M/sec is the ceiling for the entire Node process**, because JavaScript
+   runs one callback at a time. Go's number aggregates across cores: the
+   parallel benchmark sustains **18.8M checks/sec across 8 cores** on the same
+   512-key workload — about **2× the whole Node process**, and it climbs with
+   the box.
 2. **Zero allocations per check**, so sustained load creates no GC pressure.
    The Node version allocates a result object on every single call.
 3. **It has to be correct under real parallelism**, which Node never had to be.
 
 Where the engineering actually shows up is lock striping. A naive port — one
-map behind one mutex — serialises every admission decision in the process:
+map behind one mutex — serialises every admission decision in the process
+(8 goroutines, 512 keys, best of 5):
 
 ```
- 1 shard     6.7M checks/sec   149 ns/op   <- a single global lock
- 8 shards   12.8M checks/sec    78 ns/op   <- 1x GOMAXPROCS, the obvious default
-32 shards   20.5M checks/sec    49 ns/op
-128 shards  25.4M checks/sec    39 ns/op   <- flattens out here
+  1 shard    3.9M checks/sec   258 ns/op   <- a single global lock
+  2 shards   4.3M checks/sec   230 ns/op
+  8 shards   8.6M checks/sec   116 ns/op   <- 1x GOMAXPROCS, the obvious default
+ 32 shards  14.2M checks/sec    70 ns/op
+128 shards  17.4M checks/sec    57 ns/op   <- flattens out here
 ```
 
-**3.8x from sharding alone.** The default is ~8x GOMAXPROCS, not 1x: goroutines
-are not pinned to cores and hash collisions cluster, so one shard per core
-leaves them hot. Reproduce all of it:
+**4.5x from sharding alone** — call it "between 4x and 5x", the 1-shard row is
+the noisiest in the set. The default is ~8x GOMAXPROCS, not 1x: goroutines are
+not pinned to cores and hash collisions cluster, so one shard per core leaves
+them hot at less than half the achievable throughput.
+
+Worth saying in the same breath: **this 4.5× is invisible over HTTP.** The
+one-hot-key and 512-key HTTP benchmarks are within noise of each other, because
+by then the socket dominates. The optimisation is real; it just has to be
+described where it can be measured. Reproduce all of it:
 
 ```bash
-go test -bench=. -benchtime=3s ./internal/limiter/
+go test -bench=. -benchtime=2s -count=5 -benchmem -run=XXX \
+  ./internal/limiter/ ./internal/gateway/
 ```
 
 The port was not a transliteration. Node's event loop made every shared map
@@ -257,8 +302,17 @@ Clients leave signatures in data the gateway already collects, with no cookies
 and no client-side JS: timing rhythm (coefficient of variation of inter-arrival
 gaps — humans are irregular, scripts are metronomes), path entropy, whether
 they back off after a 429, and their block ratio. From those, each client is
-classified `human` / `ai_agent` / `crawler` / `retry_bug` and given an adaptive
-**lane**: the same tier limits, scaled to behaviour.
+labelled `human` / `ai_agent` / `crawler` / `retry_bug` (or `warming`, before
+there is enough traffic to judge) and given an adaptive **lane**: the same tier
+limits, scaled to behaviour.
+
+**This is a heuristic, not a model.** `internal/fingerprint/fingerprint.go` is a
+hand-written `switch` over four thresholds with five hardcoded lanes; the
+"confidence" it reports is a literal per branch, chosen to rank the branches,
+not a probability. Nothing is trained and nothing is evaluated — there is no
+labelled data, so there is no precision or recall to quote. The upside is that
+it is debuggable by reading, and a real classifier could swap in behind the same
+function once there is an eval harness to justify it.
 
 When a lane moves the limit off the published plan value, the response says so
 rather than leaving the customer to wonder:
@@ -314,20 +368,67 @@ availability.
 
 ```bash
 go test -race ./...                              # unit + HTTP integration
-go test -bench=. -benchtime=2s ./internal/limiter/
 go test -cover ./internal/...
+
+# throughput: the limiter in isolation, then the same layer over real HTTP
+go test -bench=. -benchtime=2s -count=5 -benchmem -run=XXX \
+  ./internal/limiter/ ./internal/gateway/
 ```
 
-214 tests / 382 cases plus end-to-end integration tests that drive the real
-object graph over real HTTP. **No test sleeps**: every clock is injected and
-driven by hand, so nothing is timing-dependent in CI.
+Measured results, and what separates the in-process number from the HTTP one,
+are in [BENCHMARKS.md](BENCHMARKS.md).
 
-Coverage: `policy`, `audit`, `stats`, `fingerprint`, `useragent`, `authjwt` at
-100%; `automations` 99%, `ai` 98%, `orgstore` 96%, `billing` 93%, `wshub` 92%,
-`limiter` 90%.
+**340 tests / 729 cases**, all green under `-race`, including end-to-end
+integration tests that drive the real object graph over real HTTP. **No test
+sleeps**: every clock is injected and driven by hand, so nothing is
+timing-dependent in CI.
+
+Coverage, measured 2026-08-19 with `go test -cover ./internal/...`:
+
+| 100% | `policy` · `audit` · `authjwt` · `fingerprint` · `useragent` · `demo` |
+|---|---|
+| 90–99% | `automations` 99.0 · `ai` 97.7 · `orgstore` 95.9 · `stats` 94.6 · `billing` 92.6 · `wshub` 90.8 |
+| below 90% | `limiter` 86.9 · `redisclient` 86.0 · `gateway` 62.4 · `server` 41.3 · `live` 0.0 |
+
+The bottom row is the honest one. `internal/server` is the HTTP surface and is
+the least covered thing in the repo; `internal/live` (SSE + visitor tracking)
+has no direct tests at all and is only exercised transitively.
 
 CI runs gofmt, vet, build, the race suite with coverage, a dependency-count
 gate, a smoke test against the shipped binary, and a Docker build.
+
+## Known limits
+
+Things this does not do, written down so nobody has to discover them in
+production or in an interview.
+
+- **The deployed gateway is per-process, not per-cluster.** `cmd/gateway/main.go:169`
+  wires the **in-memory** token bucket. Run N replicas behind a load balancer and
+  each one grants every tenant their full budget, so the real limit is N× the
+  published one. The Redis limiters (`internal/limiter/redis.go`, including an
+  atomic Lua fixed window) exist, are tested, and satisfy the same
+  `limiter.BurstLimiter` interface — but they are **not** the deployed path, and
+  swapping them in is a config change nobody has run under load.
+- **No standard observability.** No Prometheus exporter, no OpenTelemetry, no
+  tracing. Rich stats are computed internally and served as JSON to the built-in
+  dashboard, which is not the same thing as being scrapeable by somebody else's
+  monitoring.
+- **The behavioural lane is a heuristic with no evaluation.** Five hardcoded
+  lanes behind four hand-tuned thresholds; no labelled data, so no precision or
+  recall. See the fingerprinting section above.
+- **The NSFW endpoint is a deterministic keyword stub**, not a model. It exists
+  so the demo has a realistically-shaped expensive route to protect.
+- **Throughput: quote the HTTP number, not the limiter number.** The token
+  bucket does ~11M checks/sec serial and ~18M/sec across 8 cores, but that is
+  arithmetic under a mutex. Through real HTTP the same layer serves ~47k req/sec
+  on an M2 laptop, and most of the difference is net/http and the kernel, not
+  LimitPlane. [BENCHMARKS.md](BENCHMARKS.md) has both, side by side, with the
+  no-middleware baseline that separates them.
+- **Coverage is not uniform.** `internal/server` sits around 41%.
+- **`internal/ai` talks to exactly one provider** (Groq, over plain HTTP with no
+  SDK) for the explainer, the autopilot's reviewer and the token-metering proxy.
+  Every one of them has a deterministic fallback and works with no API key, but
+  none of them is provider-agnostic.
 
 ## Deploy
 
@@ -357,6 +458,9 @@ blueprint for the same image.
   refilled to full, which makes eviction unobservable to the client and
   incapable of refunding anyone budget.
 
-> `site/` is the marketing page deployed on Vercel and still contains one JS
-> serverless function (`site/api/explain.js`), because Vercel's runtime serves
-> it. The gateway itself — everything in `cmd/` and `internal/` — is pure Go.
+> **On the JavaScript in this repo.** `site/` is the marketing page deployed on
+> Vercel and still contains one JS serverless function (`site/api/explain.js`),
+> because Vercel's runtime serves it. `bench/node_baseline.mjs` is the deleted
+> Node token bucket, kept only so the Go-vs-Node table above can be re-run
+> rather than believed. Neither is built, imported or shipped: the gateway —
+> everything in `cmd/` and `internal/` — is pure Go with no dependencies.

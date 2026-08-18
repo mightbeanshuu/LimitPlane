@@ -1,27 +1,41 @@
 package limiter_test
 
-// Throughput benchmarks.
+// Throughput benchmarks for the limiter ITSELF — arithmetic under a sharded
+// mutex, in process, with no HTTP anywhere near it.
 //
-// A note on the comparison, because it is easy to get wrong and this file used
-// to get it wrong. The Node original's README quoted ~181,000 checks/sec, but
-// that benchmark (bench.js) measured the REDIS+LUA limiter over a socket — it
-// was measuring network round trips, not the limiter. Comparing it to Go doing
-// in-process arithmetic is apples to oranges.
+// Read that sentence again before quoting any number from this file, because
+// it is the whole caveat. These are not service throughput. The same layer,
+// measured over a real socket in internal/gateway/bench_http_test.go, serves
+// roughly 47k req/sec on the same laptop — two and a half orders of magnitude
+// lower, almost all of it net/http and the kernel rather than the limiter.
+// BENCHMARKS.md puts both on one page. Quote the HTTP number for the service
+// and this one for the algorithm, and never swap them.
 //
-// Measured honestly, on the same machine (Apple M2, 8 cores):
+// A note on the Node comparison, because this file used to get it wrong twice.
+// First it quoted the Node README's ~181,000 checks/sec, which was bench.js
+// timing the REDIS+LUA limiter over a socket — network round trips, not a
+// limiter. Then it quoted "Node 22.0M checks/sec, 45 ns/op" against Go's 18.1M,
+// and that figure does not reproduce either: bench/node_baseline.mjs runs the
+// deleted Node token bucket verbatim (git show 3a2895e:src/algorithms/
+// tokenBucketLimiter.js) with a harness shaped like this one, and measures
+// 85 ns/op. Measured on the same machine, same day (Apple M2, go1.26.3,
+// node v24.14.0, best of 5):
 //
-//	Node in-memory token bucket   22.0M checks/sec   45 ns/op   single-threaded
-//	Go   in-memory token bucket   18.1M checks/sec   55 ns/op   single-threaded
+//	                    single thread, 1 key   single thread, 512 keys
+//	Node in-memory      85.0 ns  11.8M/sec     107.8 ns   9.3M/sec
+//	Go   in-memory      88.9 ns  11.3M/sec      ~see SerialManyTenants
 //
-// Node is FASTER single-threaded. V8's JIT is very good at a monomorphic hot
-// loop like this one, and it should be said plainly rather than hidden.
+// So single-threaded they are a wash — Node is ~4% ahead on one hot key, which
+// is close enough that it should be called a tie rather than a win for either.
+// V8's JIT is very good at a monomorphic loop like this one, and pretending
+// otherwise does not survive one follow-up question.
 //
-// The Go argument is not single-thread speed, it is these three things:
+// The Go argument was never single-thread speed. It is these three things:
 //
-//  1. That 22M is the ceiling for the ENTIRE Node process, because JavaScript
-//     runs one callback at a time. The Go number is per-core and aggregates:
-//     the parallel benchmark below sustains ~24.9M/sec across 8 cores WHILE
-//     serving traffic, and would keep climbing on a bigger box.
+//  1. Node's number is the ceiling for the ENTIRE PROCESS, because JavaScript
+//     runs one callback at a time. Go's is per-core and aggregates: the
+//     parallel benchmark below sustains ~18.8M/sec across 8 cores and would
+//     keep climbing on a bigger box.
 //  2. Zero allocations per check, so sustained load creates no GC pressure.
 //     The Node version allocates a result object on every single call.
 //  3. It is correct under real parallelism at all, which Node never had to be.
@@ -51,6 +65,28 @@ func BenchmarkTokenBucket_Serial(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tb.Check(args)
+	}
+	reportThroughput(b)
+}
+
+// Serial, but across 512 keys, so the map lookup misses cache the way it does
+// under real multi-tenant traffic. This exists to match bench/node_baseline.mjs
+// row for row: comparing Go's PARALLEL many-tenant number against Node's
+// single-threaded one would flatter Go for the wrong reason.
+func BenchmarkTokenBucket_SerialManyTenants(b *testing.B) {
+	tb := limiter.NewTokenBucket(nil)
+	const tenants = 512
+	keys := make([]string, tenants)
+	for i := range keys {
+		keys[i] = "tenant" + strconv.Itoa(i) + ":pro:/v1/demo/ping"
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tb.Check(limiter.TokenBucketArgs{
+			Key: keys[i%tenants], Capacity: hugeCapacity, RefillRatePerMs: 1, Cost: 1,
+		})
 	}
 	reportThroughput(b)
 }
