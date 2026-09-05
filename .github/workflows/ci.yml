@@ -493,34 +493,50 @@ jobs:
       - name: The MONTHLY plan meter is enforced through the whole stack
         run: |
           set -euo pipefail
-          # Give the free tier a tiny monthly plan and a huge burst, so the
-          # burst jar cannot be what refuses the request — anything blocked
-          # here was blocked by the PLAN, which is the meter that just moved
-          # into Redis and the one that decides invoices.
+          # Use the acme tenant's API KEY, not the anonymous path.
+          #
+          # The earlier step fires 20 rapid requests and collects ten 429s,
+          # which trips the autopilot's storm rule and puts that IP under an
+          # auto-cooldown. Cooldown is checked BEFORE any meter and returns
+          # early, so an anonymous request here never reaches the plan at all
+          # and reports no monthly headers — which looks exactly like "the
+          # quota did not apply". A named tenant has its own clean bucket.
           kubectl -n limitplane patch rlp api-limits --type=merge \
-            -p '{"spec":{"tiers":{"free":{"capacity":10000,"refillPerSecond":1000,"monthlyQuota":5}}}}'
+            -p '{"spec":{"tiers":{"pro":{"capacity":10000,"refillPerSecond":1000,"monthlyQuota":20}}}}'
 
+          # capacity 10000 with refill 1000 means the burst jar cannot be what
+          # refuses anything — a refusal here came from the PLAN, which is the
+          # meter that just moved into Redis and the one that decides invoices.
           for i in $(seq 1 30); do
-            q=$(curl -s -D - -o /dev/null localhost:38080/v1/demo/ping 2>/dev/null \
+            lim=$(curl -s -D - -o /dev/null -H "X-API-Key: lp_acme_e2e_key" \
+              localhost:38080/v1/demo/ping 2>/dev/null \
               | tr -d '\r' | awk -F': ' 'tolower($1)=="x-monthly-limit"{print $2}')
-            [ "${q%.*}" = "5" ] 2>/dev/null && break
+            [ "${lim%.*}" = "20" ] 2>/dev/null && break
             sleep 1
           done
-          echo "gateway reports X-Monthly-Limit: ${q:-unset}"
-          [ "${q%.*}" = "5" ] || { echo "::error::the new monthly quota never took effect"; exit 1; }
+          echo "gateway reports X-Monthly-Limit: ${lim:-unset}"
+          [ "${lim%.*}" = "20" ] || { echo "::error::the new monthly quota never took effect"; exit 1; }
+
+          rem=$(curl -s -D - -o /dev/null -H "X-API-Key: lp_acme_e2e_key" \
+            localhost:38080/v1/demo/ping 2>/dev/null \
+            | tr -d '\r' | awk -F': ' 'tolower($1)=="x-monthly-remaining"{print $2}')
+          echo "remaining before the run: ${rem:-?}"
 
           allowed=0; monthly_blocked=0
-          for i in $(seq 1 12); do
-            body=$(curl -s -o /tmp/b -w '%{http_code}' localhost:38080/v1/demo/ping)
-            if [ "$body" = "200" ]; then
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /tmp/b -w '%{http_code}' -H "X-API-Key: lp_acme_e2e_key" \
+              localhost:38080/v1/demo/ping)
+            if [ "$code" = "200" ]; then
               allowed=$((allowed+1))
-            elif grep -q monthly_quota_exhausted /tmp/b; then
+            elif grep -q monthly_quota_exhausted /tmp/b 2>/dev/null; then
               monthly_blocked=$((monthly_blocked+1))
             fi
           done
-          echo "monthly plan of 5 units: $allowed allowed, $monthly_blocked refused for quota"
+          echo "20-unit plan: $allowed allowed, $monthly_blocked refused for quota"
+
           [ "$monthly_blocked" -gt 0 ] || { echo "::error::the monthly plan was never enforced"; cat /tmp/b; exit 1; }
-          [ "$allowed" -le 5 ] || { echo "::error::$allowed requests allowed against a 5-unit plan"; exit 1; }
+          # Never more than what was left. Per-process meters would sail past this.
+          [ "$allowed" -le "${rem%.*}" ] || { echo "::error::$allowed allowed against ${rem} remaining"; exit 1; }
 
           echo "--- and the refusal explains itself ---"
           cat /tmp/b
