@@ -1,0 +1,32 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+{{- /*
+  Guard on the CRD actually existing. Without it, `helm install` on a cluster
+  without the Prometheus Operator fails with "no matches for kind
+  ServiceMonitor" and the whole release is rolled back — one optional
+  monitoring object taking down an otherwise fine install. .Capabilities is
+  how a chart asks what the cluster supports.
+*/}}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "limitplane.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "limitplane.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}{{- toYaml . | nindent 4 }}{{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "limitplane.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace }}]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- else }}
+{{- fail "metrics.serviceMonitor.enabled is true but the Prometheus Operator CRDs are not installed in this cluster" }}
+{{- end }}
+{{- end }}

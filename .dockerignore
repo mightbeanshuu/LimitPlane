@@ -1,0 +1,32 @@
+# Keep the build context tiny and, more importantly, keep secrets out of it.
+# Anything listed here cannot be COPYed into a layer even by mistake — and a
+# secret baked into a layer survives even if a later layer deletes it.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime state. These are regenerated on boot; shipping them would bake one
+# machine's tenants and org directory into the image.
+.tenants.json
+.orgs.json
+.memory.jsonl
+
+.git
+.github
+.claude
+.impeccable
+.firecrawl
+.vercel
+
+# The site is deployed to Vercel, not served from this image.
+site/
+bench/
+deploy/
+docs/
+*.md
+!README.md
+
+.DS_Store
+coverage.out

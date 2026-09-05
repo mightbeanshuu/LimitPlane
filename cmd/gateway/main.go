@@ -14,8 +14,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,16 +31,42 @@ import (
 	"github.com/mightbeanshuu/limitplane/internal/billing"
 	"github.com/mightbeanshuu/limitplane/internal/fingerprint"
 	"github.com/mightbeanshuu/limitplane/internal/gateway"
+	"github.com/mightbeanshuu/limitplane/internal/k8s"
 	"github.com/mightbeanshuu/limitplane/internal/limiter"
 	"github.com/mightbeanshuu/limitplane/internal/live"
+	"github.com/mightbeanshuu/limitplane/internal/operator"
 	"github.com/mightbeanshuu/limitplane/internal/orgstore"
 	"github.com/mightbeanshuu/limitplane/internal/policy"
+	"github.com/mightbeanshuu/limitplane/internal/redisclient"
 	"github.com/mightbeanshuu/limitplane/internal/server"
 	"github.com/mightbeanshuu/limitplane/internal/stats"
 	"github.com/mightbeanshuu/limitplane/internal/wshub"
 )
 
 const defaultOrgID = "org_anshu-labs"
+
+// Stamped at link time: go build -ldflags "-X main.version=v1.2.0 -X main.commit=abc123".
+// Surfaced on /metrics as limitplane_build_info, which is how you tell which
+// image a pod is really running without shelling into it — and there is no
+// shell to exec into anyway, because the runtime image is scratch.
+var (
+	version = "dev"
+	commit  = "none"
+)
+
+// selfCheck is the healthcheck subcommand's whole implementation.
+func selfCheck(port string) int {
+	c := &http.Client{Timeout: 3 * time.Second}
+	resp, err := c.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
 
 func env(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
@@ -48,6 +76,17 @@ func env(key, fallback string) string {
 }
 
 func main() {
+	// `limitplane healthcheck` probes the local server and exits 0 or 1.
+	//
+	// This exists because the runtime image is FROM scratch: no shell, no curl,
+	// no wget, nothing a Docker HEALTHCHECK could normally invoke. The binary
+	// being its own health probe is the standard answer, and it costs one
+	// branch. Kubernetes does not need it (the kubelet makes the HTTP request
+	// itself), but docker-compose and plain `docker run` do.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(selfCheck(env("PORT", "3000")))
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
@@ -169,12 +208,61 @@ func run(logger *slog.Logger) error {
 	buckets := limiter.NewTokenBucket(now)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	buckets.StartJanitor(ctx, time.Minute, 10*time.Minute)
-	defer buckets.Close()
+
+	// ---- one jar, or one jar per pod? ----
+	//
+	// In-memory buckets are the fastest thing there is (18.7M checks/sec, zero
+	// allocations) and they are exactly right for ONE process. Scale the
+	// Deployment to three replicas and they become a bug: each pod keeps its
+	// own jar, so a tenant on a 50-token plan can spend 150. That is not a
+	// tolerable approximation, it is the limit being triple what was sold.
+	//
+	// So: REDIS_URL present means the jars move into Redis and every replica
+	// draws from the same one. Absent means single-instance, and the local
+	// buckets stay — which keeps `go run ./cmd/gateway` dependency-free.
+	var burst limiter.BurstLimiter = buckets
+	limiterMode := "in-memory (single instance)"
+	if url := os.Getenv("REDIS_URL"); url != "" {
+		rc, err := redisclient.New(url)
+		if err != nil {
+			return fmt.Errorf("REDIS_URL is set but unusable: %w", err)
+		}
+		// Ping at boot rather than discovering the problem on the first
+		// customer request. A gateway that fails open is the right behaviour
+		// during an outage, but starting up already failing open, silently,
+		// is just an unprotected gateway wearing a rate limiter's name.
+		//
+		// RETRY, though, rather than exiting on the first failure. In
+		// Kubernetes the Redis StatefulSet and this Deployment are created in
+		// the same instant, so on a cold namespace Redis is reliably NOT ready
+		// when the gateway first looks — a single Ping means the process exits,
+		// the pod enters CrashLoopBackOff, and it recovers only because the
+		// kubelet keeps restarting it. That worked, but it produced two
+		// restarts on every fresh deploy and made the startup probe report
+		// "connection refused" against a gateway that was never actually
+		// broken. Waiting is the honest behaviour: the pod stays NotReady, so
+		// it receives no traffic, and it comes up cleanly once its dependency
+		// does.
+		//
+		// It still gives up eventually. Booting anyway on a typo'd REDIS_URL
+		// would mean every request fails open — a gateway that enforces
+		// nothing while reporting itself healthy, which is the one outcome
+		// worse than not starting.
+		if err := pingWithRetry(ctx, rc, redisWait(), logger); err != nil {
+			return fmt.Errorf("cannot reach Redis at %s: %w", redactURL(url), err)
+		}
+		defer rc.Close()
+		burst = limiter.NewRedisTokenBucket(rc)
+		limiterMode = "redis (shared across replicas)"
+	} else {
+		// Only the local buckets need sweeping; Redis expires its own keys.
+		buckets.StartJanitor(ctx, time.Minute, 10*time.Minute)
+		defer buckets.Close()
+	}
 
 	var srv *server.Server
 	gw := gateway.New(gateway.Config{
-		Policy: pol, Limiter: buckets, Monthly: monthly, Audit: auditLog,
+		Policy: pol, Limiter: burst, Monthly: monthly, Audit: auditLog,
 		Automations: auto, Fingerprints: prints, Now: now,
 		OnDecision: func(e audit.Event) { srv.OnDecision(e) },
 	})
@@ -219,7 +307,7 @@ func run(logger *slog.Logger) error {
 		Explainer: explainer, TokenMeter: tokenMeter, Memory: memory,
 		Visitors: visitors, SSE: sse, WS: wsHub,
 		GroqAPIKey: groqKey, Port: port, DefaultOrgID: defaultOrgID,
-		Logger: logger, Now: now,
+		Logger: logger, Now: now, Version: version, Commit: commit,
 	})
 
 	// Feed the AI reviewer from live stats; it may only ever act on clients that
@@ -239,6 +327,18 @@ func run(logger *slog.Logger) error {
 		}
 		return out
 	})
+	// ---- Kubernetes: rate limits as resources ----
+	//
+	// Entirely optional. Outside a cluster AutoConfig reports ErrNotInCluster,
+	// nothing starts, and every other feature behaves exactly as before. The
+	// gateway must run identically on a laptop, on Render, and in a Deployment
+	// — Kubernetes is a deployment target, not a requirement.
+	if op, err := startOperator(ctx, logger, pol, tenantStore, counters, prints, auto); err != nil {
+		logger.Warn("kubernetes integration is unavailable; continuing without it", "err", err)
+	} else if op != nil {
+		srv.Operator = op
+	}
+
 	srv.Start()
 	defer srv.Close()
 
@@ -266,6 +366,9 @@ func run(logger *slog.Logger) error {
 		"dashboard", "http://localhost:"+port+"/dashboard",
 		"billing", billingMode,
 		"aiExplainer", map[bool]string{true: "groq", false: "fallback"}[explainer.LiveMode()],
+		"limiter", limiterMode,
+		"kubernetes", map[bool]string{true: "operator running", false: "off (not in a cluster)"}[srv.Operator != nil],
+		"version", version,
 		"connectedSites", connected,
 	)
 
@@ -287,5 +390,130 @@ func run(logger *slog.Logger) error {
 		defer cancel()
 		wsHub.Close()
 		return httpServer.Shutdown(shutdownCtx)
+	}
+}
+
+// startOperator brings up the Kubernetes control plane if, and only if, this
+// process is running somewhere that has one.
+//
+// It returns (nil, nil) when there is no cluster to talk to. That is the normal
+// case for `go run`, for the Render deployment and for plain Docker, and it is
+// deliberately not an error: a missing cluster should read like a missing Groq
+// key — the feature is simply absent, and everything else works.
+func startOperator(
+	ctx context.Context,
+	logger *slog.Logger,
+	pol *policy.Policy,
+	tenants *billing.TenantStore,
+	counters *stats.Stats,
+	prints *fingerprint.Fingerprints,
+	auto *automations.Automations,
+) (*operator.Operator, error) {
+	if os.Getenv("LIMITPLANE_DISABLE_OPERATOR") == "true" {
+		return nil, nil
+	}
+	cfg, err := k8s.AutoConfig()
+	if errors.Is(err, k8s.ErrNotInCluster) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	client := k8s.New(cfg, version)
+
+	// The lease holder must be identified by something unique per POD, not per
+	// deployment. HOSTNAME is the pod name inside a container and is what the
+	// downward API would give us anyway; falling back to a random suffix means
+	// two replicas can never accidentally share an identity and both believe
+	// they hold the lease.
+	identity := env("POD_NAME", os.Getenv("HOSTNAME"))
+	if identity == "" {
+		buf := make([]byte, 6)
+		_, _ = rand.Read(buf)
+		identity = "limitplane-" + hex.EncodeToString(buf)
+	}
+
+	op := operator.New(operator.Deps{
+		Client: client, Policy: pol, Tenants: tenants, Stats: counters,
+		Fingerprints: prints, BanRemaining: auto.BanRemainingMs,
+		// WATCH_NAMESPACE empty means cluster-wide, which needs a ClusterRole.
+		// Setting it to one namespace lets the same image run with a Role
+		// instead — the least-privilege option, and what the Helm chart
+		// defaults to for anyone who does not want cluster-scoped RBAC.
+		Namespace:      os.Getenv("WATCH_NAMESPACE"),
+		Identity:       identity,
+		Logger:         logger,
+		LeaderElection: env("LEADER_ELECTION", "true") == "true",
+	})
+
+	go func() {
+		if err := op.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("kubernetes operator stopped", "err", err)
+		}
+	}()
+	return op, nil
+}
+
+// redactURL strips credentials out of a connection string before it can reach
+// a log line. redis://user:password@host:6379 in a log is a leaked credential,
+// and logs travel further than anyone expects.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "redis://<unparseable>"
+	}
+	if u.User != nil {
+		u.User = url.User("***")
+	}
+	return u.String()
+}
+
+// redisWait is how long to wait for Redis at boot before giving up.
+func redisWait() time.Duration {
+	if v := os.Getenv("REDIS_BOOT_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return 60 * time.Second
+}
+
+// pingWithRetry waits for Redis to answer, or gives up after limit.
+//
+// The backoff is capped at 2s rather than growing without bound: the thing it
+// is waiting for is a container starting a few seconds away, so a long sleep
+// would just add dead time to every deploy.
+func pingWithRetry(ctx context.Context, rc *redisclient.Client, limit time.Duration, logger *slog.Logger) error {
+	deadline := time.Now().Add(limit)
+	delay := 100 * time.Millisecond
+	attempt := 0
+
+	for {
+		err := rc.Ping()
+		if err == nil {
+			if attempt > 0 {
+				logger.Info("Redis is up", "attempts", attempt+1)
+			}
+			return nil
+		}
+		attempt++
+		if time.Now().After(deadline) {
+			return fmt.Errorf("no response after %s and %d attempts: %w", limit, attempt, err)
+		}
+		// Say something on the first miss, then stay quiet. Silence for a
+		// minute looks like a hang; a line per 100ms is noise nobody reads.
+		if attempt == 1 {
+			logger.Warn("Redis is not answering yet, waiting for it before serving traffic",
+				"timeout", limit, "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		if delay < 2*time.Second {
+			delay *= 2
+		}
 	}
 }

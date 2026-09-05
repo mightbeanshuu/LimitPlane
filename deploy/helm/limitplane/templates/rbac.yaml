@@ -1,0 +1,86 @@
+{{- if .Values.rbac.create }}
+{{- $ns := .Values.rbac.watchNamespace }}
+{{- /*
+  ClusterRole vs Role, decided by whether the operator watches every namespace.
+
+  Cluster-wide watching genuinely requires cluster-scoped permission — there is
+  no way around it. But when a deployment only serves one namespace, a Role is
+  strictly less access for identical functionality, and this token is mounted
+  into a pod that terminates untrusted internet traffic. Making that choice a
+  value rather than a hardcode is the whole point.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ if $ns }}Role{{ else }}ClusterRole{{ end }}
+metadata:
+  name: {{ include "limitplane.fullname" . }}
+  {{- if $ns }}
+  namespace: {{ $ns }}
+  {{- end }}
+  labels: {{- include "limitplane.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["limitplane.dev"]
+    resources: ["ratelimitpolicies", "tenants"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["limitplane.dev"]
+    resources: ["ratelimitpolicies/status", "tenants/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["limitplane.dev"]
+    resources: ["ratelimitpolicies/finalizers", "tenants/finalizers"]
+    verbs: ["update", "patch"]
+  # `get` on secrets, never `list`. With list, a compromised pod can enumerate
+  # every credential it can reach; with get it must already know the exact
+  # name, which only a Tenant object supplies. One verb, large difference.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ if $ns }}RoleBinding{{ else }}ClusterRoleBinding{{ end }}
+metadata:
+  name: {{ include "limitplane.fullname" . }}
+  {{- if $ns }}
+  namespace: {{ $ns }}
+  {{- end }}
+  labels: {{- include "limitplane.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: {{ if $ns }}Role{{ else }}ClusterRole{{ end }}
+  name: {{ include "limitplane.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "limitplane.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.operator.leaderElection }}
+---
+# Leader election is always namespaced: the Lease lives in the release's own
+# namespace, so cluster-wide lease access would be extra privilege for nothing.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "limitplane.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "limitplane.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "limitplane.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "limitplane.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "limitplane.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "limitplane.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

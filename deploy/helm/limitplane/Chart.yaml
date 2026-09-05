@@ -1,0 +1,31 @@
+apiVersion: v2
+name: limitplane
+description: AI-aware multi-tenant rate limiting gateway and Kubernetes operator
+type: application
+
+# Two versions, and they mean different things — a distinction people get wrong
+# constantly. `version` is the CHART's version and must bump on any template
+# change. `appVersion` is the version of the SOFTWARE the chart deploys, and
+# is what the default image tag follows.
+version: 0.1.0
+appVersion: "1.1.0"
+
+keywords: [rate-limiting, gateway, operator, api-gateway, ext-authz, prometheus]
+home: https://limitplane.vercel.app
+sources:
+  - https://github.com/mightbeanshuu/LimitPlane
+maintainers:
+  - name: Anshu Aman
+    url: https://github.com/mightbeanshuu
+
+annotations:
+  artifacthub.io/operator: "true"
+  artifacthub.io/crds: |
+    - kind: RateLimitPolicy
+      version: v1alpha1
+      name: ratelimitpolicies.limitplane.dev
+      description: Plans and per-route pricing enforced by the gateway
+    - kind: Tenant
+      version: v1alpha1
+      name: tenants.limitplane.dev
+      description: One customer or site, and the API key that identifies them

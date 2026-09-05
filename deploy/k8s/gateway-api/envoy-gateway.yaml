@@ -1,0 +1,141 @@
+# Envoy Gateway: rate limit EVERY service behind the gateway, without touching
+# any of them.
+#
+# This is the payoff of the ext_authz endpoint. Everything else in LimitPlane
+# limits traffic that flows THROUGH the LimitPlane process — you wrap your
+# handlers, or you put the proxy in front of your server. In a cluster with a
+# dozen services owned by five teams, that is a migration nobody has time for.
+#
+# Envoy's external authorization filter inverts it. The gateway that already
+# fronts every service pauses each request and asks LimitPlane one HTTP
+# question: "may this proceed?" A 200 lets it continue to the real backend;
+# anything else is returned to the client verbatim — LimitPlane's status, its
+# headers, its explanatory 429 body. No sidecar, no library, no redeploy of the
+# protected service.
+#
+# Prerequisites:
+#   helm install eg oci://docker.io/envoyproxy/gateway-helm -n envoy-gateway-system --create-namespace
+#   kubectl apply -f deploy/k8s/crds/ && kubectl apply -k deploy/k8s/base/
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: public
+  namespace: limitplane
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# An ordinary application route. Note that nothing about this mentions rate
+# limiting — the team that owns this service does not have to know LimitPlane
+# exists.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: my-api
+  namespace: limitplane
+spec:
+  parentRefs:
+    - name: public
+  hostnames: ["api.example.com"]
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - name: my-api
+          port: 8080
+---
+# THE TWELVE LINES THAT DO THE WORK.
+#
+# targetRefs attaches this policy to the HTTPRoute above. Every request Envoy
+# matches to that route now goes to LimitPlane first.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: limitplane-ratelimit
+  namespace: limitplane
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: my-api
+  extAuth:
+    # failOpen is the single most consequential setting on this page.
+    #
+    # true  -> if LimitPlane is unreachable, traffic flows UNLIMITED.
+    # false -> if LimitPlane is unreachable, EVERY request 503s.
+    #
+    # true is correct here, and it matches what the gateway already does
+    # internally when Redis is down: an outage in the rate limiter should cost
+    # you rate limiting, not availability. Set it to false only if unmetered
+    # traffic is genuinely more expensive than downtime — a real position for a
+    # gateway fronting per-token LLM billing, and one to take deliberately.
+    failOpen: true
+    http:
+      backendRefs:
+        - name: limitplane
+          port: 80
+      # Envoy calls <path><original path>, so a request for /orders arrives as
+      # /v1/authz/orders. The handler strips the prefix to recover the real
+      # route — without that, every request in the cluster would share one
+      # bucket keyed on the literal string "/v1/authz".
+      path: /v1/authz
+      # Headers Envoy forwards TO LimitPlane. It sends none by default, so
+      # omitting these means every caller looks anonymous and every request is
+      # bucketed by IP — the limiter silently stops recognising customers.
+      headersToExtAuth:
+        - x-api-key
+        - authorization
+        - user-agent
+        - x-forwarded-for
+      # Headers copied from LimitPlane's 200 onto the request BEFORE it reaches
+      # the backend. Your service can read its caller's tier and remaining
+      # budget without knowing anything about how limiting works.
+      headersToBackend:
+        - x-ratelimit-limit
+        - x-ratelimit-remaining
+        - x-limitplane-tenant
+        - x-limitplane-tier
+        - x-limitplane-lane
+        - x-limitplane-cost-class
+---
+# A BackendTrafficPolicy on the ext_authz call itself. Skipping this is a
+# genuine outage waiting to happen: LimitPlane is now in the hot path of every
+# request in the cluster, so a slow LimitPlane becomes a slow everything.
+# The timeout bounds the damage and the circuit breaker stops a pile-up.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: limitplane-authz-budget
+  namespace: limitplane
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: my-api
+  timeout:
+    http:
+      # An admission decision is a map lookup plus at most one Redis round
+      # trip. If it has not answered in 250ms it is not going to, and with
+      # failOpen the request proceeds unlimited rather than waiting.
+      requestTimeout: 250ms
+  circuitBreaker:
+    maxParallelRequests: 2048
+    maxPendingRequests: 512
+  retry:
+    numRetries: 1
+    perRetry:
+      backOff: {baseInterval: 10ms, maxInterval: 50ms}

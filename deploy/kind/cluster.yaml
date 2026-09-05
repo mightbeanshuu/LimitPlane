@@ -1,0 +1,37 @@
+# A three-node kind cluster: one control plane, two workers.
+#
+# Multiple workers are not decoration. With a single node, the Deployment's
+# topologySpreadConstraint has nothing to spread across and the PodDisruption
+# Budget can never be tested — so the two things most likely to be wrong in a
+# production manifest are exactly the two a single-node cluster cannot exercise.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: limitplane
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # Label the control plane as an ingress-ready node, so an ingress
+      # controller installed later has somewhere to land.
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # Reach the gateway from the host without a port-forward.
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+  - role: worker
+  - role: worker
+
+# A note on what this cluster CANNOT test: kind's default CNI (kindnet) does
+# not implement NetworkPolicy. Those objects will be accepted and silently
+# ignored, which is why the dev overlay removes them rather than leaving them
+# to create a false sense of protection. To test them for real, disable the
+# default CNI here and install Calico or Cilium:
+#
+#   networking:
+#     disableDefaultCNI: true
+#     podSubnet: "192.168.0.0/16"

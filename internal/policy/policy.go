@@ -261,3 +261,71 @@ func (p *Policy) APIKeyFor(tenantID string) (string, bool) {
 	}
 	return "", false
 }
+
+// ---- declarative edits (the Kubernetes operator writes through these) ------
+//
+// UpdateTier above patches a tier that already exists, which is the right shape
+// for the admin API: a human nudging one number on a live plan. A declarative
+// controller needs something different. It is handed a whole desired state and
+// has to make the world match, including tiers nobody has created yet and tiers
+// that were deleted from the manifest. These are the primitives for that.
+
+// PutTier adds a tier or replaces it wholesale.
+//
+// The incoming tier is deep-copied rather than stored as given. MonthlyQuota is
+// a *float64, so keeping the caller's pointer would leave live pricing aliased
+// to a struct the caller still owns — the same aliasing bug the audit in
+// TierSnapshot exists to prevent, arriving through a different door.
+func (p *Policy) PutTier(name string, t Tier) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cp := cloneTier(&t)
+	p.tiers[name] = &cp
+}
+
+// RemoveTier deletes a tier, reporting whether it existed.
+//
+// It REFUSES to remove the last tier. A policy with no tiers cannot resolve any
+// request, so a manifest that deletes every tier would turn the gateway into a
+// wall — and Resolve fails open, meaning the actual result is no rate limiting
+// at all. Declining to reach that state is safer than faithfully applying it.
+func (p *Policy) RemoveTier(name string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, ok := p.tiers[name]; !ok || len(p.tiers) == 1 {
+		return false
+	}
+	delete(p.tiers, name)
+	return true
+}
+
+// SetRoutes replaces the entire route table in one step.
+//
+// Whole-table replacement, not a merge, because that is what a declarative
+// resource means: the manifest is the complete statement of intent, and a route
+// deleted from it must stop being priced. Merging would make removals
+// impossible to express, which is the classic way declarative config quietly
+// becomes append-only.
+func (p *Policy) SetRoutes(routes map[string]Route) {
+	if routes == nil {
+		routes = map[string]Route{}
+	}
+	next := make(map[string]Route, len(routes))
+	for k, v := range routes {
+		next[k] = v
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.routes = next
+}
+
+// Routes returns a snapshot of the route table.
+func (p *Policy) Routes() map[string]Route {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	out := make(map[string]Route, len(p.routes))
+	for k, v := range p.routes {
+		out[k] = v
+	}
+	return out
+}

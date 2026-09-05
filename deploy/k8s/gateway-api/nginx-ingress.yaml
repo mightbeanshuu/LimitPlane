@@ -1,0 +1,44 @@
+# NGINX Ingress: the same idea, a different dialect.
+#
+# ingress-nginx implements forward auth with `auth_request`, an NGINX directive
+# that fires a subrequest to an internal endpoint and uses its status code to
+# decide whether to continue. A 2xx proceeds; anything else is returned to the
+# client.
+#
+# The important difference from Envoy: the subrequest does NOT carry the
+# original method and path in the URL, so NGINX passes them as X-Original-URI
+# and X-Original-Method headers. The ext_authz handler reads both conventions,
+# which is why the same endpoint serves both proxies.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-api
+  namespace: limitplane
+  annotations:
+    nginx.ingress.kubernetes.io/auth-url: "http://limitplane.limitplane.svc.cluster.local/v1/authz"
+    # Response headers to copy onto the upstream request.
+    nginx.ingress.kubernetes.io/auth-response-headers: >-
+      X-RateLimit-Limit,X-RateLimit-Remaining,X-LimitPlane-Tenant,X-LimitPlane-Tier,X-LimitPlane-Lane
+    # auth_request DISCARDS the subrequest's body by default, so the client
+    # would get a bare 429 with no explanation. This snippet forwards
+    # LimitPlane's JSON body — the part that tells the caller which limit they
+    # hit and when to retry.
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      proxy_set_header X-Original-URI $request_uri;
+      proxy_set_header X-Original-Method $request_method;
+      proxy_set_header X-API-Key $http_x_api_key;
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      auth_request_set $lp_retry $upstream_http_retry_after;
+      add_header Retry-After $lp_retry always;
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: my-api
+                port: {number: 8080}

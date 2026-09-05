@@ -71,7 +71,7 @@ within noise of each other, because by then the socket dominates.
 ## Resume bullets (verified against the Go source)
 
 **LIMITPLANE — Multi-Tenant Rate-Limiting Gateway with AI Cost Classes**
-*Go · Redis · Lua · Docker · GitHub Actions CI*
+*Go · Kubernetes (CRDs, operator, Helm) · Redis · Lua · Prometheus · Envoy · Docker · GitHub Actions CI*
 
 - Rebuilt a Node.js API gateway in **Go with zero third-party dependencies** —
   hand-writing the Redis RESP client, HS256 JWT, Stripe HMAC webhook
@@ -94,11 +94,34 @@ within noise of each other, because by then the socket dominates.
   INCR + EXPIRE into **one round trip** — behind one injectable-clock interface,
   so tests advance time instead of sleeping.
 - Hardened the port against concurrency bugs Node's single thread had hidden:
-  **340 tests / 729 cases green under the Go race detector** in CI, including an
+  **401 tests / 795 cases green under the Go race detector** in CI, including an
   integration test asserting exact admission counts under **200 requests driven
   by 20 concurrent workers** against a 10-token budget (exactly 10 must pass,
   190 must be refused) — a suite that surfaced **six real bugs**, including one
   that was silently halving every tenant's rate limit.
+
+- Made rate limits **first-class Kubernetes resources** — shipped two CRDs
+  (`RateLimitPolicy`, `Tenant`) with OpenAPI + CEL cross-field validation, and a
+  **controller written directly against the API server with no client-go**:
+  LIST→WATCH with bookmark handling and 410-Gone re-list recovery, leader
+  election on `coordination.k8s.io` Leases, finalizers for credential
+  revocation, and status write-back so `kubectl get` shows live allowed/blocked
+  traffic. Verified on a real cluster: **`kubectl patch` changes a production
+  rate limit in under a second with zero pod restarts.**
+- Exposed **Envoy `ext_authz`** (plus NGINX `auth_request` and Traefik
+  ForwardAuth) so the gateway rate-limits **every service behind a cluster
+  ingress without any of them changing a line of code** — 12 lines of Gateway
+  API `SecurityPolicy`.
+- Made horizontal scaling **correct**, not just possible: replaced the
+  per-process token bucket with an **atomic Redis Lua bucket keyed on Redis's
+  own clock** (pod clock skew would otherwise mint free tokens), so N replicas
+  share one budget instead of granting N× the plan — measured with a 3-replica
+  compose harness that fails the build if the limit drifts.
+- Wrote the **Prometheus exporter by hand** (still zero dependencies) with a
+  hard **cardinality cap** — per-tenant series are unbounded by design
+  (`anon:<ip>` per visitor), so unnamed tenants are excluded and named ones
+  capped, preventing a traffic spike from taking down the monitoring instead of
+  the service.
 
 ### Shorter 3-bullet variant (one-page resume)
 
@@ -110,7 +133,7 @@ within noise of each other, because by then the socket dominates.
   injectable-clock interface. Built the HTTP benchmark that measures the
   **service** (47k req/sec) rather than the function, and its first run found an
   O(n) audit-log write that was costing **10×** the gateway's throughput.
-- **340 race-detector tests (729 cases) in CI** plus HTTP integration tests; the suite
+- **401 race-detector tests (795 cases) in CI** plus HTTP integration tests; the suite
   caught six real bugs including double-metering that halved every tenant's
   limit, and an unbounded attacker-controlled memory leak.
 
@@ -147,6 +170,38 @@ node bench/node_baseline.mjs # the Node side of the comparison table
 ```
 
 ---
+
+## Four more bugs, found by putting it on a real cluster (2026-09-05)
+
+The best interview material in this project, because each one passed a full
+green unit suite and only failed against a real API server.
+
+1. **`http.Client.Timeout` killed every watch after exactly 30s.** The timeout
+   bounds the whole request *including reading the body*, and a watch IS a body
+   held open for minutes. The controller reconnected forever, never received a
+   bookmark, and re-LISTed on every cycle — and it looked healthy, because
+   reconciliation still ran on each reconnect. Fix: a second `http.Client` with
+   no timeout, used only for watches.
+2. **Leader election was silently dead.** `Lease.spec.renewTime` is
+   `metav1.MicroTime`, which parses with a layout demanding **exactly six**
+   fractional digits; `time.RFC3339Nano` emits up to nine. Every lease write was
+   rejected with a 400, so no replica ever led, so status was never written and
+   `kubectl get` showed empty columns. The unit tests passed because **my fake
+   API server was more permissive than the real one** — the fake now validates
+   MicroTime and rejects what Kubernetes rejects.
+3. **The failure was invisible.** The lease error was logged at `Debug`, below
+   the default level, so a total failure of the write path produced no output at
+   all. Now `Warn`. This is the fix that found bug #2 — the next cluster run
+   printed the exact 400 in one line.
+4. **A data race on the probe path.** `o.elector` was assigned inside `Run()`
+   (its own goroutine) while `/readyz` and `/metrics` handlers read it on
+   theirs — a write racing every Kubernetes probe. Moved construction into
+   `New()` so the field is written once before anything can read it.
+
+Plus a deployment defect: the gateway **exited** if Redis was not yet reachable
+at boot, so on a cold namespace it crash-looped twice on every deploy — while
+its whole design fails *open* at runtime. It now waits with backoff and stays
+NotReady instead, so it receives no traffic and comes up cleanly.
 
 ## The six bugs (good interview material — all existed in the Node version too)
 
@@ -211,13 +266,21 @@ that was a planning note in `sessions.md` that never became code.
 
 **Honest limitations — volunteer these, they are the good follow-ups:**
 
-- The **in-memory limiters are correct per process, not per cluster.** Three
-  replicas behind a load balancer would each grant a tenant their full budget.
-  The Redis limiters exist and are wired behind the `limiter.BurstLimiter`
-  interface, but the deployed gateway runs the in-memory one. *"How would you
-  make this correct across replicas?"* is the obvious question — have the answer.
-- **No standard observability**: no Prometheus, OpenTelemetry or tracing, even
-  though rich stats are computed internally.
+- **Burst limiting is now cluster-correct; the MONTHLY meter is not.** With
+  `REDIS_URL` set, N replicas share one token bucket (measured). The monthly
+  quota meter was not moved — it is still per-process, so N replicas can let a
+  tenant exceed a monthly plan by up to N×, and it resets on restart. Say this
+  before you are asked: it is billing state, and nobody should charge on it yet.
+- **Redis fails open.** If it is unreachable the gateway serves traffic
+  *unlimited* rather than refusing it. That is the deliberate trade — an outage
+  in the rate limiter should cost you rate limiting, not availability — but it
+  means a Redis outage is an unmetered-traffic incident.
+- **No tracing.** There is a hand-written Prometheus exporter now, but no
+  OpenTelemetry and no distributed tracing.
+- **The operator has no admission webhook and no workqueue.** Cross-object rules
+  (a Tenant naming a tier no policy defines) are reported in `status` rather
+  than rejected at apply time, and a failed reconcile waits for the next event
+  instead of retrying with backoff.
 - The **behavioural lane is a heuristic, not a classifier in the ML sense.**
   `internal/fingerprint/fingerprint.go` is a hand-written `switch` over four
   thresholds with five hardcoded lanes; the "confidence" it reports is a literal

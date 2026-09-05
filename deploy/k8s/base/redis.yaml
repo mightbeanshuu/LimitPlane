@@ -1,0 +1,115 @@
+# Redis — the shared token buckets that make horizontal scaling correct.
+#
+# WHY A STATEFULSET AND NOT A DEPLOYMENT? Honestly, for the stable network
+# identity rather than the storage: limitplane-redis-0 is a name that survives
+# a reschedule, and a Deployment's pods get a new random suffix each time.
+#
+# WHY NO PERSISTENT VOLUME? Because losing this data is a non-event. Every key
+# is a token bucket with a short TTL; if Redis restarts, every tenant's bucket
+# refills to full — a brief moment of generosity, not a correctness failure,
+# and it self-heals within one refill period. Paying for a PVC and its backup
+# story to protect data with a ten-minute lifetime is the wrong trade.
+#
+# FOR PRODUCTION, note what this is NOT: a single replica is a single point of
+# failure. The gateway fails OPEN when Redis is unreachable (an outage in the
+# rate limiter should cost you rate limiting, not availability), so a Redis
+# failure means traffic flows unlimited rather than being refused. If that is
+# unacceptable, run Redis Sentinel or a managed Redis and point REDIS_URL at it.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: limitplane-redis
+  namespace: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+    app.kubernetes.io/component: redis
+spec:
+  serviceName: limitplane-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: limitplane
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: limitplane
+        app.kubernetes.io/component: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          args:
+            # No persistence at all: no RDB snapshots, no AOF. See above — the
+            # data is disposable, and disabling it removes the fork-on-save
+            # latency spike that would otherwise show up as gateway tail
+            # latency at exactly the wrong moment.
+            - redis-server
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            # A hard memory ceiling with LRU eviction. Bucket keys include
+            # anon:<ip>, so the key space is unbounded by design; the Lua
+            # script sets a TTL on every write, and this is the backstop for
+            # the case where new keys arrive faster than old ones expire.
+            # Without it, Redis grows until the pod is OOMKilled — taking the
+            # shared buckets with it.
+            - --maxmemory
+            - 200mb
+            - --maxmemory-policy
+            - allkeys-lru
+          ports:
+            - name: redis
+              containerPort: 6379
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            tcpSocket: {port: redis}
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: limitplane-redis
+  namespace: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+    app.kubernetes.io/component: redis
+spec:
+  # A headless Service (clusterIP: None) resolves straight to the pod IP rather
+  # than to a virtual IP that load-balances. With one replica the difference is
+  # invisible; it matters the moment you add Sentinel, where clients must reach
+  # specific members rather than a random one.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: limitplane
+    app.kubernetes.io/component: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

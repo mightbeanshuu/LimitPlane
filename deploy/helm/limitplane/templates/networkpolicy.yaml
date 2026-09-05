@@ -1,0 +1,55 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+  Enforced by the CNI, not by Kubernetes. On a cluster whose CNI ignores
+  NetworkPolicy (kindnet, plain flannel), these objects are accepted and do
+  nothing — the appearance of protection with none of the substance. Verify
+  with a connectivity test before relying on them.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "limitplane.fullname" . }}-gateway
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "limitplane.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "limitplane.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.ingressNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+        - podSelector: {}
+      ports: [{protocol: TCP, port: 3000}]
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.prometheusNamespace }}
+      ports: [{protocol: TCP, port: 3000}]
+  egress:
+    # DNS first. The moment a policy has an Egress section, everything not
+    # listed is denied — including cluster DNS. Omitting this is THE classic
+    # NetworkPolicy mistake, and the symptom looks like total application
+    # failure rather than a firewall rule.
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: redis}
+      ports: [{protocol: TCP, port: 6379}]
+    - to: [{ipBlock: {cidr: 0.0.0.0/0}}]
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+{{- end }}

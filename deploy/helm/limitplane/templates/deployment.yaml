@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "limitplane.fullname" . }}
+  labels:
+    {{- include "limitplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  {{- /*
+    replicas is OMITTED when the HPA is enabled, and that omission is load
+    bearing. If the chart sets replicas AND an HPA manages it, every `helm
+    upgrade` resets the count to the chart's value and the HPA scales it back
+    — the deployment oscillates on every deploy. Leaving the field unset lets
+    the HPA own it outright.
+  */}}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "limitplane.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "limitplane.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+        {{- with .Values.podLabels }}{{- toYaml . | nindent 8 }}{{- end }}
+      annotations:
+        {{- /*
+          Hashing the ConfigMap into a pod annotation is the standard trick for
+          config that is consumed as environment variables. Env vars are read
+          once at process start, so editing a ConfigMap normally changes
+          nothing until something forces a restart. Changing this annotation
+          changes the pod template, which triggers a rolling update — so a
+          config edit actually takes effect.
+        */}}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: /metrics
+        {{- with .Values.podAnnotations }}{{- toYaml . | nindent 8 }}{{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "limitplane.serviceAccountName" . }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: PORT
+              value: "3000"
+            - name: DATA_DIR
+              value: /var/lib/limitplane
+            - name: REDIS_BOOT_TIMEOUT
+              value: {{ .Values.redis.bootTimeout | quote }}
+            - name: WATCH_NAMESPACE
+              value: {{ .Values.rbac.watchNamespace | quote }}
+            - name: LEADER_ELECTION
+              value: {{ .Values.operator.leaderElection | quote }}
+            - name: LIMITPLANE_DISABLE_OPERATOR
+              value: {{ not .Values.operator.enabled | quote }}
+            {{- with (include "limitplane.redisUrl" .) }}
+            - name: REDIS_URL
+              value: {{ . | quote }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "limitplane.fullname" . }}-config
+            - secretRef:
+                name: {{ include "limitplane.secretName" . }}
+                optional: true
+          startupProbe:
+            # The budget must exceed REDIS_BOOT_TIMEOUT: the gateway waits for
+            # Redis before binding its port, and a startup probe that gives up
+            # first would kill a process that is correctly waiting.
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 45
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/limitplane}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: data, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}

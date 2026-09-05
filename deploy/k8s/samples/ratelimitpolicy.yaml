@@ -1,0 +1,41 @@
+# The plans, as a resource. Apply this and the running gateway picks it up in
+# under a second — no restart, no dropped connection, no admin API call.
+#
+#   kubectl apply -f deploy/k8s/samples/ratelimitpolicy.yaml
+#   kubectl get rlp -n limitplane
+#   kubectl describe rlp api-limits -n limitplane
+apiVersion: limitplane.dev/v1alpha1
+kind: RateLimitPolicy
+metadata:
+  name: api-limits
+  namespace: limitplane
+spec:
+  tiers:
+    free:
+      capacity: 10          # 10 light requests of burst
+      refillPerSecond: 1    # ...then 1/sec sustained
+      monthlyQuota: 1000
+    pro:
+      capacity: 50
+      refillPerSecond: 5
+      monthlyQuota: 50000
+    enterprise:
+      capacity: 300
+      refillPerSecond: 30
+      monthlyQuota: 1000000
+
+  # This is the AI-aware part. A page load and an inference call both count as
+  # "one request" to a normal rate limiter, but only one of them costs GPU
+  # money. Pricing the expensive route at 5 tokens means a pro tenant gets
+  # 10 AI calls of burst instead of 50 — the same bucket, honestly priced.
+  routes:
+    - path: /v1/ai/generate
+      costClass: heavy
+    - path: /v1/demo/nsfw-check
+      costClass: heavy
+    - path: /v1/demo/echo
+      costClass: standard
+    - path: /v1/search
+      costClass: standard
+
+  defaultCostClass: light

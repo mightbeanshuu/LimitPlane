@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+    # Pod Security Admission. `restricted` is the strictest of the three built-in
+    # profiles and it is ENFORCED, not merely audited: a pod in this namespace
+    # that tries to run as root, keep any Linux capability, or mount a host path
+    # is rejected by the API server outright. Setting this before writing the
+    # Deployment is the honest order — it means the securityContext below is
+    # verified by the cluster, not just asserted in YAML nobody checks.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted

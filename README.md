@@ -15,6 +15,8 @@ tokens for **one** endpoint it owns (`/v1/ai/proxy` → Groq, see
 product surface.
 
 Site: **https://limitplane.vercel.app** · Gateway: **https://limitplane.onrender.com**
+Kubernetes: **[operator, CRDs and the learning guide](docs/KUBERNETES.md)** ·
+`make kind-demo`
 
 Modern APIs have a new problem: not all requests cost the same. A health-check
 ping costs microseconds; an AI inference call (an NSFW scan, a GenAI
@@ -402,17 +404,24 @@ gate, a smoke test against the shipped binary, and a Docker build.
 Things this does not do, written down so nobody has to discover them in
 production or in an interview.
 
-- **The deployed gateway is per-process, not per-cluster.** `cmd/gateway/main.go:169`
-  wires the **in-memory** token bucket. Run N replicas behind a load balancer and
-  each one grants every tenant their full budget, so the real limit is N× the
-  published one. The Redis limiters (`internal/limiter/redis.go`, including an
-  atomic Lua fixed window) exist, are tested, and satisfy the same
-  `limiter.BurstLimiter` interface — but they are **not** the deployed path, and
-  swapping them in is a config change nobody has run under load.
-- **No standard observability.** No Prometheus exporter, no OpenTelemetry, no
-  tracing. Rich stats are computed internally and served as JSON to the built-in
-  dashboard, which is not the same thing as being scrapeable by somebody else's
-  monitoring.
+- **The monthly quota meter is still per-process.** Burst buckets are shared
+  through Redis when `REDIS_URL` is set (`internal/limiter/redis.go`,
+  `RedisTokenBucket`), so N replicas enforce one budget — `make compose-proof`
+  measures it. The **monthly** meter was not moved: it lives in memory, so with
+  N replicas a tenant can exceed a monthly plan by up to N×, and it resets on
+  restart. Burst limiting scales horizontally; billing state does not, and
+  nobody should charge money on the monthly meter as it stands.
+- **Redis is a hard dependency for correct multi-replica limiting, and it
+  fails open.** If Redis is unreachable the gateway serves traffic *unlimited*
+  rather than refusing it. That is the deliberate trade — an outage in the rate
+  limiter should cost you rate limiting, not availability — but it means a Redis
+  outage is an unmetered-traffic incident. The bundled Redis is a single
+  replica with no persistence and no auth.
+- **No tracing.** There is a Prometheus exporter now (`/metrics`,
+  `internal/metrics/`), including operator health, per-tenant counters and a
+  hard cardinality cap. There is still no OpenTelemetry and no distributed
+  tracing, so you can see rates and totals but not follow one request across
+  services.
 - **The behavioural lane is a heuristic with no evaluation.** Five hardcoded
   lanes behind four hand-tuned thresholds; no labelled data, so no precision or
   recall. See the fingerprinting section above.
@@ -424,22 +433,94 @@ production or in an interview.
   on an M2 laptop, and most of the difference is net/http and the kernel, not
   LimitPlane. [BENCHMARKS.md](BENCHMARKS.md) has both, side by side, with the
   no-middleware baseline that separates them.
+- **The operator has no admission webhook and no workqueue.** Cross-object
+  rules (a Tenant naming a tier no policy defines) are reported in `status`
+  rather than rejected at apply time, and a failed reconcile waits for the next
+  watch event or status tick instead of retrying with backoff. Both are fine at
+  this object count and are the first two things to fix if it grows.
+- **The CRDs are `v1alpha1` and mean it.** No conversion webhook, no stability
+  promise.
+- **NetworkPolicy is shipped but unverified.** It is enforced by the CNI, not by
+  Kubernetes, and kind's default CNI ignores it — so the dev overlay deletes it
+  rather than shipping the appearance of protection.
 - **Coverage is not uniform.** `internal/server` sits around 41%.
 - **`internal/ai` talks to exactly one provider** (Groq, over plain HTTP with no
   SDK) for the explainer, the autopilot's reviewer and the token-metering proxy.
   Every one of them has a deterministic fallback and works with no API key, but
   none of them is provider-agnostic.
 
+## Kubernetes
+
+On Kubernetes LimitPlane is two things at once: the gateway, and an **operator**
+that turns rate limits into first-class API objects. A limit change becomes a
+reviewed pull request instead of an SSH session, and it takes effect in under a
+second with no restart and no dropped connection.
+
+```yaml
+apiVersion: limitplane.dev/v1alpha1
+kind: RateLimitPolicy
+metadata: {name: api-limits}
+spec:
+  tiers:
+    pro: {capacity: 50, refillPerSecond: 5, monthlyQuota: 50000}
+  routes:
+    - {path: /v1/ai/generate, costClass: heavy}   # 5 tokens, not 1
+```
+
+```bash
+make kind-demo        # cluster → image → operator → live traffic → proof
+```
+
+That builds a three-node kind cluster, installs the CRDs, deploys the gateway
+with Redis, applies the policy above, proves the limiting is enforced, then
+changes a production limit with `kubectl patch` and shows the gateway obeying it
+with the pod's restart count unchanged.
+
+```bash
+kubectl get ratelimitpolicies       # NAME        TIERS  ROUTES  ALLOWED  BLOCKED  READY
+kubectl get tenants                 # NAME  TENANT             TIER  ALLOWED  BLOCKED  LANE
+```
+
+`ALLOWED`, `BLOCKED` and `LANE` are written back from live traffic, so
+`kubectl get` is a status board rather than an echo of the YAML you just applied.
+
+**Protect services LimitPlane never sees.** The `/v1/authz` endpoint implements
+Envoy's external-authorization contract (and NGINX `auth_request`, and Traefik
+ForwardAuth), so twelve lines of `SecurityPolicy` rate-limit every workload
+behind your gateway — no sidecar, no library, no redeploy of the protected
+services. See `deploy/k8s/gateway-api/`.
+
+Everything is stdlib-only, including the Kubernetes client: the watch loop
+(LIST → WATCH → BOOKMARK → 410 recovery), leader election on
+`coordination.k8s.io` Leases, the finalizers and the Prometheus exporter are all
+hand-written in `internal/k8s/`, `internal/operator/` and `internal/metrics/`.
+The zero-dependency CI gate still passes.
+
+| | |
+|---|---|
+| CRDs | `deploy/k8s/crds/` — OpenAPI schema, CEL cross-field validation, printer columns |
+| Manifests | `deploy/k8s/base/` + `overlays/{dev,prod}` (kustomize) |
+| Helm | `deploy/helm/limitplane/` |
+| Ingress integration | `deploy/k8s/gateway-api/` (Envoy Gateway, ingress-nginx, Traefik) |
+| Observability | `deploy/k8s/observability/` — ServiceMonitor + alerts |
+
+**[docs/KUBERNETES.md](docs/KUBERNETES.md)** is a twelve-lesson walkthrough of
+every Kubernetes concept this uses — what it is, where it lives here, a command
+that makes it visible, and the interview question it answers.
+
 ## Deploy
 
 ```bash
-docker build -t limitplane .   # 6.8MB static binary in a scratch image
+docker build -t limitplane .   # ~7.5MB image: one static binary + a CA bundle
 docker run -p 3000:3000 -e JWT_SECRET=... limitplane
+
+make compose-up && make compose-proof   # 3 replicas + Redis, limit measured
+make kind-demo                          # the full Kubernetes story
 ```
 
 The dashboard is compiled in with `go:embed`, so the deployed artefact is one
 file with nothing beside it that can go missing. `render.yaml` is a Render
-blueprint for the same image.
+blueprint for the same image; `deploy/` holds the Kubernetes and Helm paths.
 
 ## Design notes
 

@@ -1,0 +1,181 @@
+# RateLimitPolicy — rate limits expressed as a Kubernetes resource.
+#
+# A CustomResourceDefinition teaches the API server a new noun. Once this is
+# applied, `kubectl get ratelimitpolicies` works, RBAC applies to it, an
+# admission webhook could validate it, and a GitOps controller can sync it —
+# all of that comes free, because the API server treats a custom resource
+# exactly like a built-in one. That is the actual value of a CRD over a
+# ConfigMap: not storage, but everything Kubernetes already knows how to do to
+# an object.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: ratelimitpolicies.limitplane.dev
+  labels:
+    app.kubernetes.io/name: limitplane
+    app.kubernetes.io/component: crd
+spec:
+  group: limitplane.dev
+  scope: Namespaced
+  names:
+    kind: RateLimitPolicy
+    listKind: RateLimitPolicyList
+    plural: ratelimitpolicies
+    singular: ratelimitpolicy
+    # Short names are what make a resource pleasant to live with: `kubectl get
+    # rlp` instead of the full mouthful. Categories let it join a group query,
+    # so `kubectl get limitplane` returns every object this project owns.
+    shortNames: [rlp]
+    categories: [limitplane, all]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      # additionalPrinterColumns turn `kubectl get rlp` from a list of names
+      # into a status board. The traffic columns are written back by the
+      # operator, so the resource shows what the policy is DOING, not just what
+      # it declares.
+      additionalPrinterColumns:
+        - name: Tiers
+          type: integer
+          jsonPath: .status.tiers
+        - name: Routes
+          type: integer
+          jsonPath: .status.routes
+        - name: Allowed
+          type: integer
+          jsonPath: .status.allowed
+        - name: Blocked
+          type: integer
+          jsonPath: .status.blocked
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        # Splitting status onto its own endpoint means a user editing spec and
+        # the controller writing status cannot overwrite each other. It also
+        # means `kubectl apply` of a manifest can never clobber observed state.
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: |
+            RateLimitPolicy declares the plans and per-route pricing a
+            LimitPlane gateway enforces. Every description in this schema is
+            readable with `kubectl explain ratelimitpolicy.spec.tiers`, which
+            is the documentation people actually reach for.
+          required: [spec]
+          properties:
+            apiVersion: {type: string}
+            kind: {type: string}
+            metadata: {type: object}
+            spec:
+              type: object
+              required: [tiers]
+              properties:
+                tiers:
+                  type: object
+                  minProperties: 1
+                  description: >-
+                    The plans, keyed by tier name. A Tenant references one of
+                    these by name. At least one tier is required: a policy with
+                    none cannot resolve any request.
+                  additionalProperties:
+                    type: object
+                    required: [capacity, refillPerSecond]
+                    properties:
+                      capacity:
+                        type: number
+                        exclusiveMinimum: true
+                        minimum: 0
+                        description: >-
+                          Burst bucket size in tokens. A light request costs 1,
+                          standard 2, heavy (AI inference) 5 — so capacity 50
+                          is 50 pings or 10 AI calls before the bucket empties.
+                      refillPerSecond:
+                        type: number
+                        exclusiveMinimum: true
+                        minimum: 0
+                        description: >-
+                          Tokens added back per second. This is the sustained
+                          rate; capacity is the burst above it. It must be
+                          greater than zero — a bucket that never refills
+                          empties once and blocks the tenant permanently.
+                      monthlyQuota:
+                        type: number
+                        minimum: 0
+                        description: >-
+                          Calendar-month plan cap in units, checked BEFORE the
+                          burst bucket. Omit it for a tier with no monthly cap;
+                          omitted and zero mean genuinely different plans, so
+                          do not set 0 to mean unlimited.
+                routes:
+                  type: array
+                  description: >-
+                    Per-route pricing. Anything not listed falls through to
+                    defaultCostClass.
+                  items:
+                    type: object
+                    required: [path, costClass]
+                    properties:
+                      path:
+                        type: string
+                        minLength: 1
+                        maxLength: 160
+                        description: Exact request path, for example /v1/ai/generate.
+                      costClass:
+                        type: string
+                        # An enum is validated by the API SERVER, so a typo is
+                        # rejected at `kubectl apply` time with a clear message
+                        # rather than being discovered later by a controller
+                        # that can only log about it.
+                        enum: [light, standard, heavy]
+                        description: >-
+                          light costs 1 token, standard 2, heavy 5. This is
+                          what makes the gateway AI-aware: an inference call
+                          spends five times what a page load does, so an
+                          expensive endpoint cannot hide behind a cheap
+                          request count.
+                defaultCostClass:
+                  type: string
+                  enum: [light, standard, heavy]
+                  default: light
+                  description: Price of any route not listed above.
+            status:
+              type: object
+              description: Observed state, written by the operator. Do not edit.
+              properties:
+                observedGeneration:
+                  type: integer
+                  description: >-
+                    The metadata.generation this status describes. generation
+                    only increments when spec changes, so comparing the two is
+                    how you know whether the controller has caught up — and it
+                    is what makes `kubectl wait --for=condition=Ready` mean
+                    anything.
+                tiers: {type: integer}
+                routes: {type: integer}
+                allowed: {type: integer}
+                blocked: {type: integer}
+                appliedAt: {type: string}
+                conditions:
+                  type: array
+                  description: >-
+                    Standard metav1.Condition entries. The shape matters: it is
+                    what `kubectl wait --for=condition=Ready` and ArgoCD's
+                    health checks read.
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: {type: string}
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason: {type: string}
+                      message: {type: string}
+                      lastTransitionTime: {type: string}
+                      observedGeneration: {type: integer}

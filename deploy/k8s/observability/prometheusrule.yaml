@@ -1,0 +1,93 @@
+# Alerts. Each one is here because it catches something that is genuinely
+# invisible otherwise — not because the metric exists.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: limitplane
+  namespace: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: limitplane.operator
+      rules:
+        # The split-brain detector. Exactly one replica should hold the lease.
+        # Zero means nothing is writing status back and `kubectl get lpt` is
+        # quietly frozen; two or more means leader election has failed and
+        # replicas are fighting over the same objects.
+        - alert: LimitPlaneNoSingleLeader
+          expr: sum(limitplane_operator_is_leader) != 1
+          for: 3m
+          labels: {severity: critical}
+          annotations:
+            summary: "LimitPlane has {{ $value }} operator leaders, expected exactly 1"
+            description: >-
+              Zero leaders means custom resource status has stopped updating.
+              More than one means leader election is broken and replicas are
+              writing over each other. Check the Lease:
+              kubectl get lease limitplane-operator -n limitplane -o yaml
+
+        # A climbing relist counter means the watch keeps falling out of the
+        # API server's history window — usually a wedged event handler or an
+        # overloaded control plane. Each recovery is a full re-LIST of every
+        # object, so this is both a symptom and a cause of API server load.
+        - alert: LimitPlaneWatchKeepsExpiring
+          expr: rate(limitplane_operator_watch_relists_total[15m]) > 0.02
+          for: 15m
+          labels: {severity: warning}
+          annotations:
+            summary: "LimitPlane is re-listing {{ $labels.resource }} repeatedly"
+
+        - alert: LimitPlaneReconcileErrors
+          expr: rate(limitplane_operator_reconcile_errors_total[10m]) > 0
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "LimitPlane reconciles are failing"
+            description: >-
+              A policy or tenant is being rejected. The reason is on the object:
+              kubectl describe rlp -n limitplane
+
+    - name: limitplane.traffic
+      rules:
+        # Customer-facing, and the one that earns its keep: a tenant about to
+        # hit their monthly cap should be told before they are cut off, not
+        # after.
+        - alert: LimitPlaneTenantNearMonthlyQuota
+          expr: limitplane_tenant_monthly_used_ratio > 0.8
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{ $labels.tenant }} has used {{ $value | humanizePercentage }} of their {{ $labels.tier }} plan"
+
+        - alert: LimitPlaneTenantQuotaExhausted
+          expr: limitplane_tenant_monthly_used_ratio >= 1
+          for: 1m
+          labels: {severity: critical}
+          annotations:
+            summary: "{{ $labels.tenant }} is cut off: their {{ $labels.tier }} monthly plan is spent"
+
+        # A sudden block rate usually means one of two things, and they need
+        # opposite responses: a real attack (correct, leave it), or a limit set
+        # too low after a deploy (an outage you caused). Either way, look.
+        - alert: LimitPlaneHighBlockRate
+          expr: |
+            sum(rate(limitplane_checks_total{decision="blocked"}[5m]))
+              /
+            clamp_min(sum(rate(limitplane_checks_total[5m])), 0.001)
+              > 0.3
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: "LimitPlane is blocking {{ $value | humanizePercentage }} of all traffic"
+
+        # The cardinality cap is doing its job, which means per-tenant metrics
+        # are now incomplete. Worth knowing before someone debugs a dashboard
+        # gap for an hour.
+        - alert: LimitPlaneMetricsTruncated
+          expr: limitplane_tenant_series_dropped > 0
+          for: 30m
+          labels: {severity: info}
+          annotations:
+            summary: "{{ $value }} tenants are omitted from per-tenant metrics by the cardinality cap"

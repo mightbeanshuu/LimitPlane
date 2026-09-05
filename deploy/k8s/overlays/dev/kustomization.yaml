@@ -1,0 +1,74 @@
+# Development overlay — a single replica on a laptop cluster.
+#
+# The point of an overlay is that it states only the DIFFERENCES from base.
+# Copying the whole Deployment and editing three fields is how environments
+# drift: a fix applied to prod silently misses dev because the two files have
+# nothing to do with each other. Here, everything not mentioned below is
+# inherited, so it cannot fall out of step.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: limitplane
+nameSuffix: ""
+
+resources:
+  - ../../base
+
+# One replica. Leader election still runs — with a single candidate it wins
+# immediately, and keeping it on means dev exercises the same code path as
+# prod rather than a special case that only fails in production.
+replicas:
+  - name: limitplane
+    count: 1
+
+images:
+  - name: ghcr.io/mightbeanshuu/limitplane
+    newName: limitplane
+    newTag: dev
+
+patches:
+  # A PDB of minAvailable: 2 against a single replica means `kubectl drain`
+  # blocks FOREVER — the budget can never be satisfied. On a one-node kind
+  # cluster that turns an ordinary drain into a hang with no obvious cause.
+  - target: {kind: PodDisruptionBudget, name: limitplane}
+    patch: |
+      - op: replace
+        path: /spec/minAvailable
+        value: 1
+
+  # The HPA is removed rather than resized: it needs metrics-server, which a
+  # bare kind cluster does not have, and an HPA that cannot read metrics reports
+  # a confusing "unknown" condition forever.
+  - target: {kind: HorizontalPodAutoscaler, name: limitplane}
+    patch: |
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: limitplane
+
+  # NetworkPolicy is dropped too. kind's default CNI (kindnet) has no policy
+  # enforcement, so these objects would be accepted and silently ignored —
+  # which is worse than absent, because it looks like protection that is not
+  # there. Testing them needs a kind cluster built with Calico or Cilium.
+  - target: {kind: NetworkPolicy}
+    patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: limitplane-gateway
+  - target: {kind: NetworkPolicy, name: limitplane-redis}
+    patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: limitplane-redis
+
+  # Verbose logs and a fast status loop, so a demo shows changes immediately.
+  - target: {kind: Deployment, name: limitplane}
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: LOG_LEVEL, value: debug}

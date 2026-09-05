@@ -1,0 +1,159 @@
+# Default values for LimitPlane.
+#
+# The rule this file follows: a value exists when someone has a real reason to
+# change it. A chart that parameterises every field becomes a worse YAML than
+# the YAML it replaced, and every unused knob is a thing that can be set wrong.
+
+replicaCount: 3
+
+image:
+  repository: ghcr.io/mightbeanshuu/limitplane
+  pullPolicy: IfNotPresent
+  # Defaults to .Chart.AppVersion. Override with a digest in production:
+  # a tag can be repointed at different bytes, a digest cannot.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+    # For IRSA on EKS or Workload Identity on GKE:
+    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789:role/limitplane
+
+rbac:
+  create: true
+  # Empty means watch every namespace, which requires the ClusterRole.
+  # Naming one namespace narrows it to a Role — strictly less access for the
+  # same functionality when you only serve one namespace.
+  watchNamespace: ""
+
+operator:
+  enabled: true
+  # Leader election gates STATUS WRITES only; every replica still watches, and
+  # therefore every replica has current tiers and keys. Turning it off with
+  # more than one replica means several writers on the same objects, which
+  # live-locks against the API server.
+  leaderElection: true
+  statusIntervalSeconds: 15
+
+crds:
+  # Helm installs files in crds/ once and NEVER upgrades or deletes them. That
+  # is a deliberate safety property — deleting a CRD deletes every object of
+  # that kind, so `helm uninstall` must not be able to wipe your policies. The
+  # cost is that a CRD schema change needs `kubectl apply -f` by hand.
+  install: true
+
+redis:
+  # The bundled single-replica Redis: correct for a demo, a single point of
+  # failure for production. Disable it and set externalUrl for anything real.
+  enabled: true
+  image: redis:7.4-alpine
+  maxmemory: 200mb
+  # How long the gateway waits for Redis at boot before giving up and exiting.
+  # Must stay below the startupProbe budget (90s), or the kubelet kills a pod
+  # that is correctly waiting for its dependency.
+  bootTimeout: 60s
+  externalUrl: ""
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 256Mi}
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    # No CPU limit by design: CFS throttling adds tail latency to a component
+    # that answers in microseconds. The request already guarantees a floor.
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+networkPolicy:
+  # Off by default because it is enforced by the CNI, not by Kubernetes. On a
+  # cluster whose CNI ignores policy, enabling this creates the APPEARANCE of
+  # protection with none of the substance — worse than leaving it off.
+  enabled: false
+  prometheusNamespace: monitoring
+  ingressNamespaces:
+    - envoy-gateway-system
+    - ingress-nginx
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    # Needs the Prometheus Operator CRDs.
+    enabled: false
+    interval: 15s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+
+# Secret values. Leave them empty and create the Secret out of band — a value
+# passed with --set lands in the release's stored manifest, readable by anyone
+# with get on secrets in the namespace.
+secrets:
+  create: false
+  existingSecret: ""
+  jwtSecret: ""
+  groqApiKey: ""
+  stripeSecretKey: ""
+  stripeWebhookSecret: ""
+
+config:
+  alertWebhookUrl: ""
+
+# Policies and tenants shipped WITH the release, so `helm install` produces a
+# working gateway rather than an empty one. Real deployments usually manage
+# these as separate GitOps-tracked objects instead.
+rateLimitPolicy:
+  create: true
+  name: api-limits
+  tiers:
+    free: {capacity: 10, refillPerSecond: 1, monthlyQuota: 1000}
+    pro: {capacity: 50, refillPerSecond: 5, monthlyQuota: 50000}
+    enterprise: {capacity: 300, refillPerSecond: 30, monthlyQuota: 1000000}
+  routes:
+    - {path: /v1/ai/generate, costClass: heavy}
+    - {path: /v1/demo/nsfw-check, costClass: heavy}
+    - {path: /v1/demo/echo, costClass: standard}
+  defaultCostClass: light
+
+tenants: []
+  # - name: acme
+  #   tenantId: acme.example.com
+  #   tier: pro
+  #   apiKeySecretRef: {name: acme-api-key, key: apiKey}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: limitplane
+        app.kubernetes.io/component: gateway

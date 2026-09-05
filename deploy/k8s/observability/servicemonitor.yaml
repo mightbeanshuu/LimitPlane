@@ -1,0 +1,39 @@
+# ServiceMonitor — how kube-prometheus-stack discovers a scrape target.
+#
+# Prometheus does not read this directly. The Prometheus Operator watches
+# ServiceMonitor objects, generates scrape config from them, and reloads
+# Prometheus. That indirection is the whole idea: a team ships its own
+# monitoring config alongside its Deployment instead of filing a ticket against
+# a central prometheus.yml.
+#
+# Requires the Prometheus Operator CRDs. Without them this fails with "no
+# matches for kind ServiceMonitor", which is why it is not in the base
+# kustomization — apply it only if your cluster has them.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: limitplane
+  namespace: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+    # Prometheus instances select ServiceMonitors by label. If this does not
+    # match your Prometheus's serviceMonitorSelector, the object is created,
+    # looks perfectly healthy, and is silently never scraped. Check with:
+    #   kubectl get prometheus -A -o jsonpath='{..serviceMonitorSelector}'
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: limitplane
+      app.kubernetes.io/component: gateway
+  namespaceSelector:
+    matchNames: [limitplane]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      # honorLabels: false so Prometheus's own `job` and `instance` labels win.
+      # The exporter does not set them, but being explicit prevents a future
+      # metric from accidentally overwriting target identity.
+      honorLabels: false

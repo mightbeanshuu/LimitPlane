@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "limitplane.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "limitplane.labels" . | nindent 4 }}
+data:
+  ALERT_WEBHOOK_URL: {{ .Values.config.alertWebhookUrl | quote }}

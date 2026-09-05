@@ -1,0 +1,89 @@
+# RBAC, written to the least privilege the operator can actually run on.
+#
+# The instinct when an operator returns a Forbidden error is to grant
+# cluster-admin and move on. Resist it: this ServiceAccount's token is mounted
+# into a pod that terminates untrusted internet traffic, so its permissions are
+# the blast radius of any compromise of that pod. Everything below is here
+# because the code genuinely calls it, and nothing else is.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+rules:
+  # The custom resources it reconciles. Read-only on spec: the operator never
+  # edits what a human declared. Note there is no `delete` — the operator
+  # cannot remove a policy, only read one.
+  - apiGroups: ["limitplane.dev"]
+    resources: ["ratelimitpolicies", "tenants"]
+    verbs: ["get", "list", "watch"]
+
+  # Status and finalizers are SEPARATE subresources with their own permissions.
+  # This split is the point: the operator can write observed state and can
+  # release an object it is holding open, but cannot alter the spec a user
+  # wrote. Granting `update` on the parent resource instead would let a bug in
+  # the reconcile loop silently rewrite everyone's limits.
+  - apiGroups: ["limitplane.dev"]
+    resources: ["ratelimitpolicies/status", "tenants/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["limitplane.dev"]
+    resources: ["ratelimitpolicies/finalizers", "tenants/finalizers"]
+    verbs: ["update", "patch"]
+
+  # API keys live in Secrets. `get` only, never `list` — a compromised pod with
+  # list on secrets can enumerate every credential in the cluster, whereas get
+  # requires already knowing the exact name, which only a Tenant object supplies.
+  # This one verb difference is the single highest-value RBAC decision here.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+
+  # Events are how the operator explains itself in `kubectl describe`.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: limitplane
+subjects:
+  - kind: ServiceAccount
+    name: limitplane
+    namespace: limitplane
+---
+# Leader election is deliberately a namespaced Role, not part of the ClusterRole
+# above. The Lease lives in exactly one namespace — the operator's own — so
+# cluster-wide lease permissions would be strictly more access for no benefit.
+# Splitting it costs eight lines and shrinks what a stolen token can reach.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: limitplane-leader-election
+  namespace: limitplane
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: limitplane-leader-election
+  namespace: limitplane
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: limitplane-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: limitplane
+    namespace: limitplane

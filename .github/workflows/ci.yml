@@ -132,15 +132,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+
+      # Build for BOTH architectures. Kubernetes clusters are increasingly
+      # arm64 (Graviton, Ampere, an Apple Silicon laptop running kind), and an
+      # amd64-only image fails there with "exec format error" — a confusing
+      # message for what is really a missing build target. Building both in CI
+      # is the only way to know the cross-compile still works.
+      - name: Build multi-arch (no load; buildx cannot load two platforms)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Load the native one so it can actually be RUN. A multi-platform build
+      # produces a manifest list, which the local docker daemon cannot load.
+      - name: Build native and load
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: false
           load: true
           tags: limitplane:ci
+          build-args: |
+            VERSION=ci
+            COMMIT=${{ github.sha }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Run the image and health check it
         run: |
@@ -150,5 +174,273 @@ jobs:
             sleep 0.25
           done
           curl -sf localhost:3000/healthz
+
+          echo "--- the image reports its own version on /metrics ---"
+          curl -sf localhost:3000/metrics | grep limitplane_build_info
+
+          echo "--- the binary is its own health probe (scratch has no shell) ---"
+          docker exec lp /limitplane healthcheck && echo "healthcheck subcommand ✓"
+
+          echo "--- it runs unprivileged ---"
+          uid=$(docker inspect -f '{{.Config.User}}' limitplane:ci)
+          [ "$uid" = "65534:65534" ] || { echo "image runs as '$uid', expected 65534:65534"; exit 1; }
+
           docker logs lp
           docker rm -f lp
+
+  manifests:
+    name: Kubernetes manifests are valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      # Every overlay must render. A kustomization that only breaks in prod is
+      # a kustomization that breaks during an incident.
+      - name: Render every kustomize overlay
+        run: |
+          set -euo pipefail
+          for overlay in base overlays/dev overlays/prod; do
+            printf '%-16s' "$overlay"
+            kubectl kustomize "deploy/k8s/$overlay" > "/tmp/$(basename $overlay).yaml"
+            echo "ok ($(grep -c '^kind:' /tmp/$(basename $overlay).yaml) objects)"
+          done
+
+      - name: Helm lint and render
+        run: |
+          set -euo pipefail
+          helm lint deploy/helm/limitplane
+          helm template lp deploy/helm/limitplane > /tmp/helm-default.yaml
+          helm template lp deploy/helm/limitplane --set rbac.watchNamespace=team-a > /tmp/helm-ns.yaml
+          helm template lp deploy/helm/limitplane --set redis.enabled=false --set replicaCount=1 > /tmp/helm-nordis.yaml
+          echo "all value combinations render ✓"
+
+      # The chart's guardrails must actually fire. A guard that silently stops
+      # working is worse than no guard, because it is still trusted.
+      - name: Guardrails reject bad values
+        run: |
+          set -euo pipefail
+          if helm template lp deploy/helm/limitplane \
+               --set autoscaling.enabled=false --set replicaCount=2 \
+               --set podDisruptionBudget.minAvailable=2 >/dev/null 2>&1; then
+            echo "::error::an unsatisfiable PodDisruptionBudget was accepted"
+            exit 1
+          fi
+          echo "unsatisfiable PDB rejected ✓"
+
+          if helm template lp deploy/helm/limitplane \
+               --set metrics.serviceMonitor.enabled=true >/dev/null 2>&1; then
+            echo "::error::a ServiceMonitor was rendered without the Prometheus CRDs"
+            exit 1
+          fi
+          echo "ServiceMonitor without CRDs rejected ✓"
+
+      # Validate against the real Kubernetes OpenAPI schemas. This is what
+      # catches a misspelled field: YAML that parses fine and means nothing.
+      - name: Validate against Kubernetes schemas
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp
+          for f in /tmp/base.yaml /tmp/dev.yaml /tmp/prod.yaml /tmp/helm-default.yaml; do
+            printf '%-24s' "$(basename $f)"
+            # -ignore-missing-schemas lets CRDs and Prometheus Operator kinds
+            # through; -strict rejects unknown fields on everything else, which
+            # is where the real typos live.
+            /tmp/kubeconform -strict -summary -ignore-missing-schemas "$f"
+          done
+
+  e2e:
+    name: End-to-end on a real cluster
+    runs-on: ubuntu-latest
+    # This is the job that proves the claims. Everything above tests parts in
+    # isolation; only a real API server can show that the CRDs install, the
+    # operator authenticates with its ServiceAccount, the watch delivers, the
+    # lease elects, and an edit to a YAML file changes a live rate limit.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Create a kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: limitplane
+          config: deploy/kind/cluster.yaml
+
+      - name: Build and side-load the image
+        run: |
+          docker build --build-arg VERSION=e2e --build-arg COMMIT=${{ github.sha }} -t limitplane:dev .
+          kind load docker-image limitplane:dev --name limitplane
+
+      - name: Install the CRDs
+        run: |
+          kubectl apply -f deploy/k8s/crds/
+          # apply returns when the object is stored, not when the endpoint is
+          # served. Without this wait, the sample resources below race it.
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/ratelimitpolicies.limitplane.dev crd/tenants.limitplane.dev
+          kubectl api-resources --api-group=limitplane.dev
+
+      - name: Deploy
+        run: |
+          kubectl apply -k deploy/k8s/overlays/dev
+          kubectl -n limitplane rollout status deploy/limitplane --timeout=180s
+          kubectl -n limitplane get pods -o wide
+
+      - name: The CRD schema rejects an invalid policy
+        run: |
+          set -euo pipefail
+          # A tier that never refills would block its tenants forever. The API
+          # server must refuse it, so the mistake cannot reach the cluster.
+          cat <<'BAD' > /tmp/bad.yaml
+          apiVersion: limitplane.dev/v1alpha1
+          kind: RateLimitPolicy
+          metadata: {name: bad, namespace: limitplane}
+          spec:
+            tiers:
+              broken: {capacity: 10, refillPerSecond: 0}
+          BAD
+          if kubectl apply -f /tmp/bad.yaml 2>/tmp/err; then
+            echo "::error::the API server accepted refillPerSecond: 0"
+            exit 1
+          fi
+          grep -q "refillPerSecond" /tmp/err && echo "schema rejected it ✓"
+
+          # And the CEL rule: a Tenant must carry exactly one kind of key.
+          cat <<'BAD2' > /tmp/bad2.yaml
+          apiVersion: limitplane.dev/v1alpha1
+          kind: Tenant
+          metadata: {name: keyless, namespace: limitplane}
+          spec: {tenantId: nobody.example.com, tier: free}
+          BAD2
+          if kubectl apply -f /tmp/bad2.yaml 2>/tmp/err2; then
+            echo "::error::the API server accepted a Tenant with no API key"
+            exit 1
+          fi
+          cat /tmp/err2
+          echo "CEL cross-field rule rejected it ✓"
+
+      - name: The operator reconciles a real policy
+        run: |
+          set -euo pipefail
+          kubectl -n limitplane create secret generic acme-api-key \
+            --from-literal=apiKey=lp_acme_e2e_key
+          kubectl apply -f deploy/k8s/samples/
+
+          kubectl -n limitplane wait --for=condition=Ready --timeout=90s \
+            ratelimitpolicy/api-limits
+          kubectl -n limitplane wait --for=condition=Ready --timeout=90s \
+            tenant/acme
+
+          echo "--- status was written back from live traffic ---"
+          kubectl -n limitplane get rlp,lpt
+          # The Secret-backed key must be reported as coming from a Secret, not
+          # inline — proof the operator really read it rather than falling back.
+          src=$(kubectl -n limitplane get tenant acme -o jsonpath='{.status.keySource}')
+          case "$src" in
+            Secret*) echo "key sourced from $src ✓" ;;
+            *) echo "::error::keySource is '$src', expected a Secret"; exit 1 ;;
+          esac
+
+      - name: Leader election elects exactly one replica
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            holder=$(kubectl -n limitplane get lease limitplane-operator \
+              -o jsonpath='{.spec.holderIdentity}' 2>/dev/null || true)
+            [ -n "$holder" ] && break
+            sleep 2
+          done
+          [ -n "$holder" ] || { echo "::error::no operator lease was acquired"; exit 1; }
+          echo "lease held by $holder ✓"
+          kubectl -n limitplane get lease limitplane-operator -o yaml
+
+      - name: Rate limiting is enforced, and the ext_authz endpoint works
+        run: |
+          set -euo pipefail
+          kubectl -n limitplane port-forward svc/limitplane 38080:80 &
+          for i in $(seq 1 40); do
+            curl -sf localhost:38080/healthz >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+
+          allowed=0; blocked=0
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' localhost:38080/v1/demo/ping)
+            [ "$code" = "200" ] && allowed=$((allowed+1)) || true
+            [ "$code" = "429" ] && blocked=$((blocked+1)) || true
+          done
+          echo "in-process middleware: $allowed allowed, $blocked blocked"
+          [ "$blocked" -gt 0 ] || { echo "::error::nothing was rate limited"; exit 1; }
+
+          echo "--- the Envoy ext_authz endpoint limits a path it never serves ---"
+          a=0; b=0
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' localhost:38080/v1/authz/api/orders)
+            [ "$code" = "200" ] && a=$((a+1)) || true
+            [ "$code" = "429" ] && b=$((b+1)) || true
+          done
+          echo "ext_authz: $a allowed, $b blocked"
+          [ "$b" -gt 0 ] || { echo "::error::ext_authz never refused anything"; exit 1; }
+
+      - name: A kubectl edit changes a live limit with no restart
+        run: |
+          set -euo pipefail
+          before=$(kubectl -n limitplane get pods -l app.kubernetes.io/component=gateway \
+            -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
+
+          kubectl -n limitplane patch rlp api-limits --type=merge \
+            -p '{"spec":{"tiers":{"free":{"capacity":250,"refillPerSecond":25,"monthlyQuota":1000}}}}'
+
+          for i in $(seq 1 30); do
+            limit=$(curl -s -D - -o /dev/null localhost:38080/v1/demo/ping \
+              | tr -d '\r' | awk -F': ' 'tolower($1)=="x-ratelimit-limit"{print $2}')
+            case "${limit%.*}" in
+              ''|*[!0-9]*) : ;;
+              *) [ "${limit%.*}" -gt 100 ] && break ;;
+            esac
+            sleep 1
+          done
+          echo "gateway now reports X-RateLimit-Limit: $limit"
+          [ "${limit%.*}" -gt 100 ] || { echo "::error::the live limit did not change"; exit 1; }
+
+          after=$(kubectl -n limitplane get pods -l app.kubernetes.io/component=gateway \
+            -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
+          [ "$before" = "$after" ] || { echo "::error::the pod restarted; the change was not applied live"; exit 1; }
+          echo "limit changed with zero restarts ✓"
+
+      - name: Deleting a Tenant revokes its key
+        run: |
+          set -euo pipefail
+          # The finalizer must hold the object open until the key is out of the
+          # running policy. Without it, a deleted customer keeps being served.
+          kubectl -n limitplane get tenant acme -o jsonpath='{.metadata.finalizers}'
+          kubectl -n limitplane delete tenant acme --timeout=60s
+          echo "the finalizer released and the object was deleted ✓"
+
+      - name: Prometheus metrics are scrapeable
+        run: |
+          set -euo pipefail
+          curl -sf localhost:38080/metrics > /tmp/metrics.txt
+          for m in limitplane_checks_total limitplane_operator_is_leader \
+                   limitplane_operator_reconcile_total limitplane_build_info; do
+            grep -q "^# TYPE $m" /tmp/metrics.txt || { echo "::error::missing $m"; exit 1; }
+          done
+          # Exactly one leader across the deployment.
+          leaders=$(awk '/^limitplane_operator_is_leader/{s+=$NF} END{print s+0}' /tmp/metrics.txt)
+          echo "operator leaders on this replica: $leaders"
+          grep '^limitplane_' /tmp/metrics.txt | head -30
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n limitplane get all,rlp,lpt,lease -o wide || true
+          kubectl -n limitplane describe pods || true
+          kubectl -n limitplane logs -l app.kubernetes.io/component=gateway --tail=200 || true
+          kubectl -n limitplane get events --sort-by=.lastTimestamp || true

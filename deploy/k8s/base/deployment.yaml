@@ -1,0 +1,203 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: limitplane
+  namespace: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+    app.kubernetes.io/component: gateway
+spec:
+  # Three replicas is the smallest number that survives losing one pod while
+  # still having a majority available during a rolling update. It is only safe
+  # because the token buckets live in Redis: with in-memory buckets, three
+  # replicas would hand every tenant three times their plan.
+  replicas: 3
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: limitplane
+      app.kubernetes.io/component: gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never drop below the current capacity during a deploy. A gateway is the
+      # front door: losing a replica mid-rollout means real requests are shed by
+      # the thing that exists to protect against shedding requests.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: limitplane
+        app.kubernetes.io/component: gateway
+      annotations:
+        # Scrape config for a Prometheus running without the operator CRDs.
+        # With kube-prometheus-stack, the ServiceMonitor in ../observability
+        # supersedes these — both are provided because clusters differ.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: limitplane
+      # SIGTERM handling: the gateway drains in-flight requests and closes its
+      # WebSocket and SSE connections before exiting. 30s is comfortably more
+      # than its 10s shutdown timeout, so the kubelet never has to SIGKILL it
+      # and no dashboard is cut off mid-write.
+      terminationGracePeriodSeconds: 30
+
+      # Pod-level security. Everything here is required by the `restricted` Pod
+      # Security Standard the namespace enforces, so these are not decoration —
+      # remove any one and the API server refuses to create the pod.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Spread replicas across nodes. Without this the scheduler is free to put
+      # all three on one node, and that node's failure takes the entire gateway
+      # with it — three replicas that share a single point of failure are one
+      # replica wearing a costume.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          # ScheduleAnyway, not DoNotSchedule: on a single-node cluster (kind,
+          # minikube, a small dev cluster) DoNotSchedule leaves two of three
+          # pods Pending forever. Preference, not a hard requirement.
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: limitplane
+              app.kubernetes.io/component: gateway
+
+      containers:
+        - name: gateway
+          image: ghcr.io/mightbeanshuu/limitplane:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          env:
+            # The pod's own name, used as the leader-election identity. Two
+            # replicas must never share an identity or they would both believe
+            # they hold the lease — the downward API is the only source that is
+            # guaranteed unique per pod.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Empty means watch every namespace, which is what the ClusterRole
+            # grants. Set it to one namespace to run with only a Role.
+            - name: WATCH_NAMESPACE
+              value: ""
+            - name: LEADER_ELECTION
+              value: "true"
+            # The whole reason three replicas are safe. Point every pod at one
+            # Redis and they share a single token bucket per tenant.
+            - name: REDIS_URL
+              value: redis://limitplane-redis:6379
+            # DATA_DIR must be writable, and the root filesystem is read-only —
+            # so it points at the emptyDir mounted below.
+            - name: DATA_DIR
+              value: /var/lib/limitplane
+            - name: PORT
+              value: "3000"
+            # How long to wait for Redis at boot before giving up. Redis and
+            # this Deployment are created in the same instant, so on a cold
+            # namespace Redis is reliably not ready yet; waiting keeps the pod
+            # NotReady (so it gets no traffic) instead of crash-looping.
+            # Must stay below the startupProbe budget above.
+            - name: REDIS_BOOT_TIMEOUT
+              value: "60s"
+          envFrom:
+            - configMapRef:
+                name: limitplane-config
+            - secretRef:
+                name: limitplane-secrets
+                # Optional so the Deployment still starts on a cluster where
+                # nobody has created the Secret. Every key in it is for an
+                # optional integration (Groq, Stripe), and the gateway
+                # degrades to deterministic fallbacks without them — a demo
+                # that needs five secrets set is a demo nobody can run.
+                optional: true
+
+          # Three probes, three different questions. Conflating them is the
+          # classic Kubernetes outage.
+          startupProbe:
+            # Buys the process time to come up WITHOUT the liveness probe being
+            # armed. Without it, a slow start looks like a hang and the kubelet
+            # restarts the pod forever — a CrashLoopBackOff caused entirely by
+            # the health check.
+            #
+            # This budget MUST exceed REDIS_BOOT_TIMEOUT below. The gateway
+            # waits for Redis before it binds its port, so if the startup probe
+            # gives up first the kubelet kills a process that was correctly
+            # waiting for its dependency — turning a clean cold start into a
+            # restart loop. 2s x 45 = 90s, against a 60s Redis wait.
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 45
+          livenessProbe:
+            # "Is this process broken beyond recovery?" It must NOT depend on
+            # Redis or the API server: a dependency blip would restart every
+            # replica at once and turn a degradation into an outage.
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            # "Should traffic come here right now?" This one DOES check the
+            # Kubernetes sync, so a pod that has not yet loaded its tiers and
+            # API keys is kept out of the Service until it has — otherwise it
+            # would reject valid customers as unknown for its first second.
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+
+          resources:
+            requests:
+              # The request is what the scheduler reserves and what the
+              # autoscaler measures against. It is set from the real footprint:
+              # the limiter allocates zero per operation, so memory is
+              # dominated by the bucket map and the connection pool.
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              # A memory limit is a hard kill (OOMKilled), so it is set with
+              # real headroom. There is deliberately NO cpu limit: CPU limits
+              # are enforced by CFS throttling, which adds tail latency to a
+              # component whose entire job is to answer in microseconds. The
+              # request already guarantees a floor under contention.
+              memory: 256Mi
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/limitplane
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        # readOnlyRootFilesystem means the process cannot write anywhere unless
+        # a writable volume is mounted. emptyDir is right here: the state is a
+        # cache (tenants, org directory, RAG memory) that is rebuilt from the
+        # custom resources on boot, so it must not survive a reschedule and
+        # does not deserve a PersistentVolume.
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

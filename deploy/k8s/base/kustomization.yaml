@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: limitplane
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - rbac.yaml
+  - configmap.yaml
+  - redis.yaml
+  - deployment.yaml
+  - service.yaml
+  - pdb.yaml
+  - hpa.yaml
+  - networkpolicy.yaml
+  # CRDs are applied separately, on purpose. They are cluster-scoped and
+  # ordering matters: a custom resource cannot be created before the CRD that
+  # defines it exists, and kubectl does not wait. See the Makefile's
+  # `k8s-install` target, which applies CRDs first and waits for them to be
+  # Established.
+  # secret.example.yaml is NOT listed: it is a template, not something to apply.
+
+# Common labels on every object, following the app.kubernetes.io convention
+# that kubectl, Helm, Lens and most dashboards understand.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/name: limitplane
+      app.kubernetes.io/part-of: limitplane
+      app.kubernetes.io/managed-by: kustomize
+
+images:
+  - name: ghcr.io/mightbeanshuu/limitplane
+    newTag: latest

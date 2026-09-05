@@ -1,0 +1,118 @@
+# NetworkPolicy — the pod-level firewall.
+#
+# Kubernetes networking is FLAT and OPEN by default: every pod in the cluster
+# can reach every other pod on every port. That surprises people. A compromised
+# workload in an unrelated namespace can talk straight to Redis, or scrape
+# /metrics, unless something says otherwise.
+#
+# CAVEAT WORTH KNOWING: NetworkPolicy is enforced by the CNI plugin, not by
+# Kubernetes itself. On Calico, Cilium or Antrea these rules are real; on a
+# cluster whose CNI has no policy support (kind's default kindnet, flannel)
+# they are silently ACCEPTED AND IGNORED. Applying them and assuming you are
+# protected is worse than not applying them at all, so verify with a
+# connectivity test before trusting this.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: limitplane-gateway
+  namespace: limitplane
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: limitplane
+      app.kubernetes.io/component: gateway
+  policyTypes: [Ingress, Egress]
+
+  ingress:
+    # Traffic from an ingress controller or service mesh gateway. Adjust the
+    # namespace label to match your ingress namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: envoy-gateway-system
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        # Any workload in this namespace calling the ext_authz endpoint.
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Prometheus scraping /metrics. This is why the endpoint needs no bearer
+    # token: it is not reachable from anywhere else.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
+
+  egress:
+    # DNS. Forgetting this is THE classic NetworkPolicy mistake: the moment a
+    # policy has an Egress section, everything not listed is denied — including
+    # cluster DNS. Every outbound name lookup then fails and the symptom looks
+    # like a total application failure rather than a firewall rule.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    # The shared token buckets.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: redis
+      ports:
+        - {protocol: TCP, port: 6379}
+    # The Kubernetes API server, for the operator's watches. It is reached by
+    # cluster IP, which no podSelector can express — hence a CIDR. 443 and 6443
+    # cover the usual endpoints.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Deny the rest of the private ranges: outbound HTTPS is for
+              # Groq, Stripe and the geo lookup, all on the public internet.
+              # A gateway that terminates hostile traffic should not be able to
+              # reach arbitrary internal services if it is ever compromised.
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - {protocol: TCP, port: 443}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - {protocol: TCP, port: 6443}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: limitplane-redis
+  namespace: limitplane
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: limitplane
+      app.kubernetes.io/component: redis
+  policyTypes: [Ingress]
+  ingress:
+    # Only the gateway may talk to Redis. Redis has no authentication here, so
+    # this policy IS its access control — anything that can reach port 6379 can
+    # read and delete every token bucket in the cluster.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: limitplane
+              app.kubernetes.io/component: gateway
+      ports:
+        - protocol: TCP
+          port: 6379

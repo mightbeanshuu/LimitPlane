@@ -1,0 +1,39 @@
+# Traefik: ForwardAuth middleware, the third dialect.
+#
+# Traefik uses the X-Forwarded-* family rather than X-Original-*. Same handler,
+# same decision, third set of header names — which is exactly why the ext_authz
+# endpoint reads all three conventions instead of assuming one proxy.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: limitplane
+  namespace: limitplane
+spec:
+  forwardAuth:
+    address: http://limitplane.limitplane.svc.cluster.local/v1/authz
+    authResponseHeaders:
+      - X-RateLimit-Limit
+      - X-RateLimit-Remaining
+      - X-LimitPlane-Tenant
+      - X-LimitPlane-Tier
+      - X-LimitPlane-Lane
+    authRequestHeaders:
+      - X-API-Key
+      - Authorization
+      - User-Agent
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: my-api
+  namespace: limitplane
+spec:
+  entryPoints: [web]
+  routes:
+    - match: Host(`api.example.com`)
+      kind: Rule
+      middlewares:
+        - name: limitplane
+      services:
+        - name: my-api
+          port: 8080

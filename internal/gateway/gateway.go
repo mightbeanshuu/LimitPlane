@@ -256,7 +256,22 @@ func (g *Gateway) Apply(w http.ResponseWriter, r *http.Request) Decision {
 		Route:  r.URL.Path,
 		UA:     r.Header.Get("User-Agent"),
 	})
+	g.WriteDecision(w, d)
+	return d
+}
 
+// WriteDecision renders a decision onto a response: budget headers always, and
+// the full 429 body when it was a block.
+//
+// It is split out from Apply because the decision does not always come from the
+// request being written to. The Envoy ext_authz endpoint asks about a request
+// that is happening somewhere ELSE in the cluster — a different path, a
+// different method, on a service LimitPlane never sees — and then answers on
+// this connection. Sharing this function is what guarantees a request limited
+// through an Ingress gets byte-identical headers and the same explanatory 429
+// as one limited by the middleware in-process. Two renderers would drift, and
+// the drift would only ever show up in production.
+func (g *Gateway) WriteDecision(w http.ResponseWriter, d Decision) {
 	// step 4: budget headers on EVERY response, allowed or not. Good API
 	// citizens tell clients how much budget is left BEFORE blocking them.
 	h := w.Header()
@@ -275,7 +290,7 @@ func (g *Gateway) Apply(w http.ResponseWriter, r *http.Request) Decision {
 		h.Set("X-Monthly-Reset", time.UnixMilli(d.Monthly.ResetsAt).UTC().Format(time.RFC3339))
 	}
 	if d.Allowed {
-		return d
+		return
 	}
 
 	// step 5: a standard 429, but the MESSAGE depends on WHY — these are
@@ -320,7 +335,6 @@ func (g *Gateway) Apply(w http.ResponseWriter, r *http.Request) Decision {
 
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(body)
-	return d
 }
 
 // ctxKey is unexported so no other package can collide with our context key.

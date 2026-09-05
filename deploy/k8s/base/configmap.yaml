@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: limitplane-config
+  namespace: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+data:
+  # Non-secret configuration. Anything here is visible to anyone with read
+  # access to the namespace, so credentials belong in the Secret instead.
+  #
+  # A caveat worth knowing: changing a ConfigMap consumed through envFrom does
+  # NOT restart the pods. Environment variables are read once at process start,
+  # so an edit here sits inert until something triggers a rollout. That is a
+  # frequent and confusing source of "I changed it and nothing happened".
+  # Trigger it explicitly:
+  #     kubectl rollout restart deployment/limitplane -n limitplane
+  #
+  # This is also exactly why the interesting configuration — tiers, routes,
+  # tenants — lives in RateLimitPolicy and Tenant objects instead. Those the
+  # operator watches, so an edit takes effect in under a second with no restart
+  # and no dropped connection.
+  ALERT_WEBHOOK_URL: ""
+  LIMITPLANE_DISABLE_OPERATOR: "false"

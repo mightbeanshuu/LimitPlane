@@ -1,0 +1,83 @@
+{{- if and .Values.redis.enabled (not .Values.redis.externalUrl) }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "limitplane.fullname" . }}-redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "limitplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  serviceName: {{ include "limitplane.fullname" . }}-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "limitplane.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "limitplane.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image | quote }}
+          args:
+            # No persistence: every key is a token bucket with a short TTL, so
+            # losing them means every tenant refills to full — a moment of
+            # generosity, not a correctness failure. Disabling saves also
+            # removes the fork-on-snapshot latency spike.
+            - redis-server
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            # The key space is unbounded by design (anon:<ip> per visitor), so
+            # a hard ceiling with LRU eviction is the backstop for new keys
+            # arriving faster than TTLs expire.
+            - --maxmemory
+            - {{ .Values.redis.maxmemory | quote }}
+            - --maxmemory-policy
+            - allkeys-lru
+          ports:
+            - {name: redis, containerPort: 6379}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          livenessProbe:
+            tcpSocket: {port: redis}
+            periodSeconds: 10
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            periodSeconds: 5
+          resources: {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - {name: data, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "limitplane.fullname" . }}-redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "limitplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  clusterIP: None
+  selector:
+    {{- include "limitplane.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  ports:
+    - {name: redis, port: 6379, targetPort: redis}
+{{- end }}

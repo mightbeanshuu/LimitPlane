@@ -1,0 +1,55 @@
+{{- if .Values.rateLimitPolicy.create }}
+{{- /*
+  Ship a working policy with the release, so `helm install` produces a gateway
+  that limits something rather than an empty one.
+
+  The hook annotations matter: CRDs in crds/ are installed by Helm BEFORE
+  templates, but on a fast cluster the API server may not have finished
+  establishing them when this object is applied. post-install/post-upgrade
+  ordering removes that race.
+*/}}
+apiVersion: limitplane.dev/v1alpha1
+kind: RateLimitPolicy
+metadata:
+  name: {{ .Values.rateLimitPolicy.name }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "limitplane.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    # Keep the object when the hook completes; without this Helm deletes its
+    # own hook resources and the policy would vanish moments after install.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  tiers: {{- toYaml .Values.rateLimitPolicy.tiers | nindent 4 }}
+  {{- with .Values.rateLimitPolicy.routes }}
+  routes: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  defaultCostClass: {{ .Values.rateLimitPolicy.defaultCostClass }}
+{{- end }}
+{{- range .Values.tenants }}
+---
+apiVersion: limitplane.dev/v1alpha1
+kind: Tenant
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- include "limitplane.labels" $ | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  tenantId: {{ .tenantId | quote }}
+  tier: {{ .tier | quote }}
+  {{- with .org }}
+  org: {{ . | quote }}
+  {{- end }}
+  {{- if .apiKeySecretRef }}
+  apiKeySecretRef: {{- toYaml .apiKeySecretRef | nindent 4 }}
+  {{- else if .apiKey }}
+  apiKey: {{ .apiKey | quote }}
+  {{- else }}
+  {{- fail (printf "tenant %q needs either apiKeySecretRef or apiKey" .name) }}
+  {{- end }}
+{{- end }}

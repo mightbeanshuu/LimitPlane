@@ -1,0 +1,15 @@
+# Grouped so overlays can reference this DIRECTORY rather than the files.
+#
+# Kustomize refuses to load a file from outside the directory being built —
+# a deliberate guard against an overlay reaching into paths it does not own.
+# The fix is always the same: give the shared directory its own kustomization
+# and reference the directory.
+#
+# Both objects need the Prometheus Operator CRDs. Applying them without those
+# installed fails with "no matches for kind ServiceMonitor", which is why this
+# is not part of base.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - servicemonitor.yaml
+  - prometheusrule.yaml

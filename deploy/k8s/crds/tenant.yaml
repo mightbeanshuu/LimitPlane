@@ -1,0 +1,152 @@
+# Tenant — one customer or site, and the API key that identifies them.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tenants.limitplane.dev
+  labels:
+    app.kubernetes.io/name: limitplane
+    app.kubernetes.io/component: crd
+spec:
+  group: limitplane.dev
+  scope: Namespaced
+  names:
+    kind: Tenant
+    listKind: TenantList
+    plural: tenants
+    singular: tenant
+    shortNames: [lpt]
+    categories: [limitplane, all]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Tenant
+          type: string
+          jsonPath: .spec.tenantId
+        - name: Tier
+          type: string
+          jsonPath: .status.tier
+        - name: Allowed
+          type: integer
+          jsonPath: .status.allowed
+        - name: Blocked
+          type: integer
+          jsonPath: .status.blocked
+        # The behavioural lane is LimitPlane's differentiator, surfaced where a
+        # cluster operator will actually see it: `kubectl get lpt` tells you
+        # which customers are humans and which are bots.
+        - name: Lane
+          type: string
+          jsonPath: .status.lane
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion: {type: string}
+            kind: {type: string}
+            metadata: {type: object}
+            spec:
+              type: object
+              required: [tenantId, tier]
+              # CEL validation, evaluated by the API SERVER at admission time.
+              #
+              # This is the rule OpenAPI cannot express: a constraint ACROSS two
+              # fields. Without it, a Tenant with neither key is accepted by
+              # kubectl, stored in etcd, and then sits there failing quietly
+              # while the operator writes a condition nobody reads. With it,
+              # `kubectl apply` is refused on the spot with this message. Push
+              # validation as early as it will go — the API server is the
+              # earliest place it can live.
+              x-kubernetes-validations:
+                - rule: "has(self.apiKey) != has(self.apiKeySecretRef)"
+                  message: >-
+                    set exactly one of spec.apiKey (demos only) or
+                    spec.apiKeySecretRef (production)
+              properties:
+                tenantId:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                  description: >-
+                    The customer or site this key belongs to. It appears on the
+                    dashboard, in the audit log and as a Prometheus label, so
+                    prefer something stable and human-readable such as a
+                    hostname.
+                tier:
+                  type: string
+                  minLength: 1
+                  description: >-
+                    Name of a tier from a RateLimitPolicy. A tier that does not
+                    exist yet is not an error — the Tenant simply waits, and
+                    the next reconcile picks it up once the policy lands.
+                apiKeySecretRef:
+                  type: object
+                  required: [name, key]
+                  description: >-
+                    The production way to supply a key: the operator reads it
+                    from a Secret, so the credential is never in the manifest,
+                    never in git, and rotatable without editing this object.
+                  properties:
+                    name:
+                      type: string
+                      description: Secret name, in this Tenant's namespace.
+                    key:
+                      type: string
+                      description: Key within the Secret's data.
+                apiKey:
+                  type: string
+                  description: >-
+                    Inline key, for demos and kind clusters only. A plaintext
+                    credential in a manifest ends up in git and in every
+                    `kubectl get -o yaml`; the operator raises a Warning event
+                    when this is used. Prefer apiKeySecretRef.
+                org:
+                  type: string
+                  description: Optional organisation this tenant belongs to.
+            status:
+              type: object
+              description: Observed state, written by the operator. Do not edit.
+              properties:
+                observedGeneration: {type: integer}
+                tier: {type: string}
+                allowed: {type: integer}
+                blocked: {type: integer}
+                lane:
+                  type: string
+                  description: >-
+                    Behavioural classification from live traffic — human,
+                    ai_agent, crawler or retry_bug. Derived from inter-arrival
+                    timing, path spread and backoff manners, never from the
+                    User-Agent string, which anyone can set to anything.
+                monthlyUsed: {type: number}
+                monthlyQuota: {type: number}
+                lastSeen: {type: string}
+                keySource:
+                  type: string
+                  description: >-
+                    Where the credential came from, so an auditor can tell a
+                    Secret-backed tenant from an inline one without reading spec.
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: {type: string}
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason: {type: string}
+                      message: {type: string}
+                      lastTransitionTime: {type: string}
+                      observedGeneration: {type: integer}

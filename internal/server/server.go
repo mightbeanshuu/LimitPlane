@@ -23,6 +23,7 @@ import (
 	"github.com/mightbeanshuu/limitplane/internal/gateway"
 	"github.com/mightbeanshuu/limitplane/internal/limiter"
 	"github.com/mightbeanshuu/limitplane/internal/live"
+	"github.com/mightbeanshuu/limitplane/internal/operator"
 	"github.com/mightbeanshuu/limitplane/internal/orgstore"
 	"github.com/mightbeanshuu/limitplane/internal/policy"
 	"github.com/mightbeanshuu/limitplane/internal/stats"
@@ -55,6 +56,19 @@ type Deps struct {
 	DefaultOrgID string
 	Logger       *slog.Logger
 	Now          func() int64
+
+	// Operator is the Kubernetes control plane, and is nil whenever LimitPlane
+	// is not running in a cluster — on a laptop, on Render, in plain Docker.
+	// Every handler that touches it nil-checks first, because "no Kubernetes"
+	// is a completely normal way to run this and must not degrade anything
+	// else. It is the same principle as the missing Groq key and the missing
+	// Stripe keys: a feature that is absent should be absent, not fatal.
+	Operator *operator.Operator
+	// Version and Commit are stamped in at build time and surface on /metrics
+	// as limitplane_build_info, which is how you confirm which image a pod is
+	// actually running without shelling into it.
+	Version string
+	Commit  string
 }
 
 type Server struct {

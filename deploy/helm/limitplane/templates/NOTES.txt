@@ -1,0 +1,51 @@
+LimitPlane {{ .Chart.AppVersion }} is installed as release {{ .Release.Name }}.
+
+Watch it come up:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "limitplane.fullname" . }}
+
+Your rate limits are now Kubernetes objects:
+  kubectl -n {{ .Release.Namespace }} get ratelimitpolicies
+  kubectl -n {{ .Release.Namespace }} get tenants
+  kubectl -n {{ .Release.Namespace }} describe rlp {{ .Values.rateLimitPolicy.name }}
+
+Which replica writes status back (exactly one should hold the lease):
+  kubectl -n {{ .Release.Namespace }} get lease limitplane-operator -o yaml
+
+Open the dashboard:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "limitplane.fullname" . }} 3000:{{ .Values.service.port }}
+  open http://localhost:3000/dashboard
+
+Prometheus scrape:
+  curl -s localhost:3000/metrics | grep limitplane_
+
+{{- if and (gt (int .Values.replicaCount) 1) (not (include "limitplane.redisUrl" .)) }}
+
+  ############################################################
+  #  WARNING: {{ .Values.replicaCount }} replicas with NO shared Redis.
+  #
+  #  Each pod keeps its own token buckets, so every tenant gets
+  #  {{ .Values.replicaCount }}x the limit you configured. That is not a rounding
+  #  error — it is the limit being wrong by a factor of {{ .Values.replicaCount }}.
+  #
+  #  Fix it with either:
+  #      --set redis.enabled=true
+  #      --set redis.externalUrl=redis://your-redis:6379
+  #  or run a single replica.
+  ############################################################
+{{- end }}
+{{- if not .Values.operator.enabled }}
+
+  NOTE: the operator is disabled, so RateLimitPolicy and Tenant objects are
+  ignored. Configure limits through the admin API or the dashboard instead.
+{{- end }}
+{{- if and .Values.secrets.create (not .Values.secrets.jwtSecret) }}
+
+  NOTE: JWT_SECRET was generated for you and is reused on upgrade. To rotate
+  it (which logs every dashboard user out), delete the Secret and upgrade.
+{{- end }}
+
+Protect OTHER services in the cluster without changing them — point your
+gateway's external authorization at this one:
+  deploy/k8s/gateway-api/envoy-gateway.yaml   (Envoy Gateway / Gateway API)
+  deploy/k8s/gateway-api/nginx-ingress.yaml   (ingress-nginx auth_request)
+  deploy/k8s/gateway-api/traefik.yaml         (Traefik ForwardAuth)

@@ -1,0 +1,22 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- /*
+  A guard against a real footgun: minAvailable >= replicaCount makes the budget
+  unsatisfiable, and `kubectl drain` then blocks forever with no clear reason.
+  Failing the install with an explanation beats debugging a hung drain at 2am.
+*/}}
+{{- if and (not .Values.autoscaling.enabled) (ge (int .Values.podDisruptionBudget.minAvailable) (int .Values.replicaCount)) }}
+{{- fail (printf "podDisruptionBudget.minAvailable (%d) must be less than replicaCount (%d), or no pod can ever be evicted and node drains will hang" (int .Values.podDisruptionBudget.minAvailable) (int .Values.replicaCount)) }}
+{{- end }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "limitplane.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "limitplane.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "limitplane.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+{{- end }}

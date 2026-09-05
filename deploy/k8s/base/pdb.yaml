@@ -1,0 +1,22 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: limitplane
+  namespace: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+spec:
+  # A PDB constrains VOLUNTARY disruption: node drains, cluster upgrades,
+  # autoscaler scale-downs. Without it, `kubectl drain` on a node happily
+  # evicts every LimitPlane pod at once, and the front door of the cluster
+  # disappears during a routine maintenance window. minAvailable: 2 makes the
+  # drain wait for a replacement instead.
+  #
+  # It does NOT protect against involuntary loss (a node dying) — that is what
+  # the topology spread constraint is for. The two are complementary and people
+  # routinely assume one covers the other.
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: limitplane
+      app.kubernetes.io/component: gateway

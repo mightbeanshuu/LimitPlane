@@ -1,0 +1,64 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: limitplane
+  namespace: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: limitplane
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    # CPU is the metric that works on any cluster with metrics-server, and is
+    # the honest primary signal for this workload: admission decisions are pure
+    # computation plus one Redis round trip.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # 70% of the REQUEST, not the limit. With a 100m request that is 70m
+          # average across pods before scaling out — early enough to have new
+          # pods ready before latency moves.
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+    # Requests per second per pod, from the Prometheus adapter or KEDA.
+    # Commented out because it needs prometheus-adapter installed and
+    # configured — an HPA referencing a metric the cluster cannot serve does
+    # not fail loudly, it just stops scaling, which is a bad way to find out.
+    #
+    # - type: Pods
+    #   pods:
+    #     metric:
+    #       name: limitplane_checks_per_second
+    #     target:
+    #       type: AverageValue
+    #       averageValue: "2000"
+
+  behavior:
+    scaleUp:
+      # React fast. A rate limiter falls behind precisely during a traffic
+      # spike, which is the moment it matters most.
+      stabilizationWindowSeconds: 30
+      policies:
+        - {type: Percent, value: 100, periodSeconds: 30}
+        - {type: Pods, value: 4, periodSeconds: 30}
+      selectPolicy: Max
+    scaleDown:
+      # Shrink slowly. Five minutes of stability before removing a pod stops
+      # the autoscaler oscillating on bursty traffic — and every scale-down
+      # ends a pod's WebSocket and SSE connections, so churn is visible to
+      # users in a way scale-up is not.
+      stabilizationWindowSeconds: 300
+      policies:
+        - {type: Pods, value: 1, periodSeconds: 60}

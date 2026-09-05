@@ -19,6 +19,21 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /favicon.svg", s.handleLogo)
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 
+	// ---- Kubernetes surfaces --------------------------------------------
+	//
+	// All three sit OUTSIDE the limiter, and each for its own reason.
+	// /readyz and /metrics are called by the cluster itself on a fixed timer;
+	// rate limiting your own kubelet is how a busy pod gets killed by its own
+	// probe. /v1/authz is the more interesting case: it is asked ONE question
+	// per request in the whole cluster, and it answers by metering the request
+	// it was asked ABOUT. Putting it behind the middleware would meter the
+	// question as well as the answer, charging every tenant twice — the exact
+	// double-metering bug the Go port already had to fix once on /v1/demo/ping.
+	s.mux.HandleFunc("GET /readyz", s.handleReady)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
+	s.mux.HandleFunc(AuthzPrefix, s.handleAuthz)
+	s.mux.HandleFunc(AuthzPrefix+"/", s.handleAuthz)
+
 	// ---- the beacon: how a deployed site reports its traffic ----
 	s.mux.HandleFunc("GET /b", s.handleBeacon)
 

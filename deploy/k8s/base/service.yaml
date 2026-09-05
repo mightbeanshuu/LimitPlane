@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: limitplane
+  namespace: limitplane
+  labels:
+    app.kubernetes.io/name: limitplane
+    app.kubernetes.io/component: gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: limitplane
+    app.kubernetes.io/component: gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  # The dashboard holds a WebSocket open and the live feed holds an SSE stream.
+  # Round-robin per connection would scatter a single browser session across
+  # replicas; a client that reconnects mid-session would jump pods and lose its
+  # stream. Session affinity keeps one client on one pod for three hours.
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800

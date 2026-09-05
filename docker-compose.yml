@@ -1,0 +1,75 @@
+# Three replicas behind a load balancer, sharing one Redis.
+#
+# This exists to make ONE point visible without a Kubernetes cluster: what
+# actually changes when you scale a rate limiter horizontally.
+#
+#   make compose-up      bring it up
+#   make compose-proof   watch three pods enforce ONE budget
+#
+# Flip REDIS_URL to empty in the gateway service and run the proof again: the
+# same tenant suddenly gets three times their limit, because each replica is
+# keeping its own jar. That is the bug this whole layer exists to prevent, and
+# it is far more convincing seen than described.
+name: limitplane
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 200mb
+      - --maxmemory-policy
+      - allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      args:
+        VERSION: compose
+        COMMIT: local
+    # Three identical replicas. Compose gives each a distinct hostname, which
+    # the gateway uses as its leader-election identity — the same mechanism as
+    # a pod name in Kubernetes.
+    deploy:
+      replicas: 3
+    environment:
+      PORT: "3000"
+      DATA_DIR: /tmp
+      JWT_SECRET: compose-shared-secret-not-for-production
+      # The line that makes three replicas correct rather than three times
+      # wrong. Comment it out to see the failure it prevents.
+      REDIS_URL: redis://redis:6379
+      LIMITPLANE_DISABLE_OPERATOR: "true"
+    depends_on:
+      redis:
+        condition: service_healthy
+    # The image is `scratch` — no shell, no curl — so the binary is its own
+    # health probe via the `healthcheck` subcommand.
+    healthcheck:
+      test: ["CMD", "/limitplane", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  lb:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/compose/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - gateway
+    restart: unless-stopped
