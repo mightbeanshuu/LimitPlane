@@ -1,0 +1,108 @@
+name: Release
+
+# Publishes the container image the manifests actually reference.
+#
+# Without this the deployment story is broken in a way that only shows up on
+# someone else's cluster: deploy/k8s/base, the prod overlay and the Helm chart
+# defaults all pull ghcr.io/mightbeanshuu/limitplane, and CI built that image
+# with push: false — so it existed nowhere. `kubectl apply -k deploy/k8s/base`
+# would sit in ImagePullBackOff forever. The dev overlay worked only because
+# `kind load` side-loads a locally built image, which hid the gap.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and publish the image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to push to GHCR with the automatic GITHUB_TOKEN. Without it
+      # the push fails with a 403 that reads like a credential problem.
+      packages: write
+      # Lets the build attach a provenance attestation, which is what makes the
+      # image's origin verifiable rather than merely claimed.
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU is only needed to RUN foreign binaries. The Dockerfile
+      # cross-compiles with Go instead, so this is here purely so buildx can
+      # assemble the arm64 layers, not to emulate a build.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push (amd64 + arm64)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Recorded in the image so `limitplane_build_info` on /metrics can be
+          # traced back to a commit. The runtime image is scratch, so there is
+          # no shell to exec into and ask — the metric is the only way to know
+          # what a pod is running.
+          provenance: true
+          sbom: true
+
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo "digest: \`${{ steps.build.outputs.digest }}\`"
+            echo ""
+            echo "Pin by digest in production — a tag can be repointed, a digest cannot:"
+            echo '```'
+            echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

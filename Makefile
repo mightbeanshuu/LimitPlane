@@ -209,3 +209,10 @@ manifests: ## Render every kustomize overlay
 .PHONY: validate
 validate: manifests helm-lint ## Validate all deployment manifests
 	@echo "manifests ✓"
+
+.PHONY: sync-crds
+sync-crds: ## Copy the CRDs into the Helm chart (CI fails if they drift)
+	@for f in ratelimitpolicy tenant; do \
+		cp deploy/k8s/crds/$$f.yaml deploy/helm/limitplane/crds/$$f.yaml; \
+		echo "  synced $$f.yaml"; \
+	done

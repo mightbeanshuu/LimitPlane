@@ -208,6 +208,23 @@ jobs:
             echo "ok ($(grep -c '^kind:' /tmp/$(basename $overlay).yaml) objects)"
           done
 
+      # Helm requires CRDs to live in the chart's own crds/ directory, so they
+      # are necessarily a COPY of deploy/k8s/crds/. A copy with no guard is a
+      # copy that silently rots: someone adds a field to the CRD, forgets the
+      # chart, and Helm users get a schema that rejects manifests kustomize
+      # users can apply. This makes the drift a build failure instead.
+      - name: CRDs have not drifted between kustomize and Helm
+        run: |
+          set -euo pipefail
+          for f in ratelimitpolicy tenant; do
+            if ! diff -u "deploy/k8s/crds/$f.yaml" "deploy/helm/limitplane/crds/$f.yaml"; then
+              echo "::error::deploy/helm/limitplane/crds/$f.yaml has drifted from deploy/k8s/crds/$f.yaml"
+              echo "Fix with: cp deploy/k8s/crds/$f.yaml deploy/helm/limitplane/crds/$f.yaml"
+              exit 1
+            fi
+          done
+          echo "CRDs are in sync ✓"
+
       - name: Helm lint and render
         run: |
           set -euo pipefail

@@ -496,6 +496,12 @@ Everything is stdlib-only, including the Kubernetes client: the watch loop
 hand-written in `internal/k8s/`, `internal/operator/` and `internal/metrics/`.
 The zero-dependency CI gate still passes.
 
+**Images** are published to `ghcr.io/mightbeanshuu/limitplane` by
+`.github/workflows/release.yml` on every push to `main` and every `v*` tag,
+multi-arch (amd64 + arm64) with an SBOM and a signed provenance attestation.
+Pin by digest in production: a tag can be repointed at different bytes, a
+digest cannot.
+
 | | |
 |---|---|
 | CRDs | `deploy/k8s/crds/` — OpenAPI schema, CEL cross-field validation, printer columns |

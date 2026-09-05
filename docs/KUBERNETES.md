@@ -137,6 +137,7 @@ recompiled, redeployed, or even aware.
 | `deploy/k8s/crds/` | The CRDs | OpenAPI schemas, CEL validation, printer columns |
 | `deploy/k8s/base/` | The manifests | Every workload object, and why each field is set |
 | `deploy/helm/limitplane/` | The chart | Templating, immutable selectors, capability checks |
+| `.github/workflows/release.yml` | Image publishing | Multi-arch buildx, GHCR auth, SBOM, provenance attestation |
 
 ---
 
