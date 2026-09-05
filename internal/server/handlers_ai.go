@@ -140,12 +140,20 @@ func (s *Server) handleAIProxy(w http.ResponseWriter, r *http.Request) {
 	// ordinary request units draw down one pool rather than two.
 	over := false
 	if tier, found := s.Policy.TierSnapshot(tenant.Tier); found && tier.MonthlyQuota != nil {
-		m := s.Monthly.Check(limiter.MonthlyArgs{
+		m, err := s.Monthly.CheckMonthly(limiter.MonthlyArgs{
 			Key:   fmt.Sprintf("%s:%s:monthly", tenant.TenantID, tenant.Tier),
 			Quota: *tier.MonthlyQuota,
 			Cost:  result.Units,
 		})
-		over = !m.Allowed
+		// Fail open, consistently with the gateway: an unreachable meter must
+		// not turn into a refusal for work the model has ALREADY done. The call
+		// has been made and paid for upstream at this point, so refusing here
+		// would bill the user nothing and still deny them the answer.
+		if err != nil {
+			s.Logger.Warn("monthly meter unreachable; not charging this AI call",
+				"tenant", tenant.TenantID, "err", err)
+		}
+		over = err == nil && !m.Allowed
 		if over {
 			s.remember(
 				fmt.Sprintf("%s %s token budget exhausted on /v1/ai/proxy (%d tokens)", when(s.Now()), tenant.TenantID, result.Usage.TotalTokens),

@@ -404,13 +404,15 @@ gate, a smoke test against the shipped binary, and a Docker build.
 Things this does not do, written down so nobody has to discover them in
 production or in an interview.
 
-- **The monthly quota meter is still per-process.** Burst buckets are shared
-  through Redis when `REDIS_URL` is set (`internal/limiter/redis.go`,
-  `RedisTokenBucket`), so N replicas enforce one budget — `make compose-proof`
-  measures it. The **monthly** meter was not moved: it lives in memory, so with
-  N replicas a tenant can exceed a monthly plan by up to N×, and it resets on
-  restart. Burst limiting scales horizontally; billing state does not, and
-  nobody should charge money on the monthly meter as it stands.
+- **Both meters are cluster-correct now, but only when `REDIS_URL` is set.**
+  With it, the burst jar (`RedisTokenBucket`) and the monthly plan
+  (`RedisMonthlyQuota`) both live in Redis, so N replicas enforce one budget —
+  measured by `make compose-proof` and by seven integration tests that run
+  against a real Redis in CI, including concurrency tests that fire 200
+  requests at a 50-unit plan and assert exactly 50 land. **Without** it the
+  process keeps its own meters, which is correct for one instance and wrong for
+  more than one: the Helm chart warns you at install time if you ask for
+  multiple replicas with no shared store.
 - **Redis is a hard dependency for correct multi-replica limiting, and it
   fails open.** If Redis is unreachable the gateway serves traffic *unlimited*
   rather than refusing it. That is the deliberate trade — an outage in the rate

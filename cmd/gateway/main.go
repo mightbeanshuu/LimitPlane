@@ -200,7 +200,10 @@ func run(logger *slog.Logger) error {
 
 	// One shared monthly meter: the gateway AND the token-metering proxy charge
 	// the same per-tenant budget, so LLM spend and request units draw one pool.
-	monthly := limiter.NewMonthlyQuota(now)
+	// Declared here because the AI proxy and the gateway share it; which
+	// IMPLEMENTATION it gets is decided below, once we know whether there is a
+	// Redis to put it in.
+	var monthly limiter.MonthlyMeter = limiter.NewMonthlyQuota(now)
 
 	// The burst limiter is sharded so admission decisions do not all serialise on
 	// one lock, and it runs a janitor because the key space is unbounded: every
@@ -253,7 +256,17 @@ func run(logger *slog.Logger) error {
 		}
 		defer rc.Close()
 		burst = limiter.NewRedisTokenBucket(rc)
-		limiterMode = "redis (shared across replicas)"
+		// The PLAN meter moves too, and this is the one that matters most.
+		//
+		// A burst jar that is wrong per-replica lets a tenant briefly exceed
+		// their rate, and it self-corrects within one refill period. A monthly
+		// meter that is wrong per-replica lets a tenant on a 50,000-unit plan
+		// spend 150,000 across three pods — every month, compounding, and it is
+		// the number you invoice on. Leaving this in memory while moving the
+		// burst jar would have fixed the cosmetic half of the problem and left
+		// the expensive half.
+		monthly = limiter.NewRedisMonthlyQuota(rc, now)
+		limiterMode = "redis (burst + monthly plan shared across replicas)"
 	} else {
 		// Only the local buckets need sweeping; Redis expires its own keys.
 		buckets.StartJanitor(ctx, time.Minute, 10*time.Minute)

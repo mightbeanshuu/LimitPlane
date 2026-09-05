@@ -581,6 +581,14 @@ read-modify-write across the network; two replicas interleaving there both see
 the same balance and both spend it. Classic lost update, and it hands out
 roughly double the limit exactly when load is highest.
 
+**The second half people forget.** Fixing the burst jar and stopping there is
+the common outcome, and it fixes the cheap half. A burst overshoot lets a tenant
+briefly exceed their *rate* and self-corrects within one refill period. A
+monthly meter that is wrong per-replica lets a tenant on a 50,000-unit plan
+spend 150,000 — every month, compounding, and it is the number you invoice on.
+`RedisMonthlyQuota` moves that one too, with the month id in the key so the
+reset on the 1st is implicit: no cron job, nothing to fail.
+
 **Interviewer asks:** *"You scaled from one replica to three and your rate
 limiter got 3× more permissive. Why, and how do you fix it?"*
 
@@ -597,6 +605,12 @@ an outage in the rate limiter should cost you rate limiting, not availability.
 The alternative I considered was sticky routing by tenant so each tenant always
 lands on one pod, which avoids Redis entirely, but it makes rebalancing and pod
 loss lose state and it does not survive an autoscaling event.
+
+I would also volunteer that the burst jar was only half of it. The monthly plan
+meter had exactly the same bug and matters more, because it is billing state
+rather than a rate that self-corrects — so that moved into Redis too, as a
+separate Lua script whose key includes the calendar month, which makes the reset
+on the 1st implicit rather than a cron job that can fail.
 
 ---
 
@@ -927,10 +941,13 @@ not a correctness failure, and it self-heals within one refill period. Paying
 for a PVC plus its backup story to protect data with a ten-minute lifetime is
 the wrong trade.
 
-The thing that *would* need durable storage is the monthly quota meter, since
-that is billing state — and being honest, it is in memory today. That is a real
-gap I would fix by moving it into Redis with persistence enabled, or into
-Postgres, before charging anyone money on it.
+The one thing here that genuinely IS durable state is the monthly quota meter,
+because that is what an invoice is computed from. It lives in Redis now rather
+than in a pod, which fixes the correctness problem — three replicas share one
+plan instead of granting three. What it still lacks is persistence: this Redis
+runs with saving disabled, so losing it mid-month silently refunds everyone.
+Before billing real money on it I would turn on AOF for that instance, or move
+the meter to Postgres and keep Redis for the disposable burst jars.
 </details>
 
 <details>
@@ -1210,10 +1227,17 @@ someone who followed a tutorial. Say these before you are asked.
   next event or status tick rather than retrying with backoff. Fine at this
   object count and this cost; the first thing to fix if either grows.
 
-- **Monthly quota is in memory.** Burst buckets are shared through Redis; the
-  monthly meter is not. It is per-pod, so with three replicas a tenant can
-  exceed a monthly plan by up to 3×, and it resets on restart. Nobody should
-  bill on it as it stands. Fixing it means Redis with persistence, or Postgres.
+- **Redis is required for correct multi-replica limiting.** Both meters — the
+  burst jar and the monthly plan — are shared through Redis, but only when
+  `REDIS_URL` is set. Without it each pod meters independently, which is right
+  for one instance and wrong for more. The Helm chart refuses to let that
+  happen silently: `helm install` with `replicaCount > 1` and no shared store
+  prints a warning that says the limit will be off by exactly the replica count.
+- **The monthly counter has no durable persistence.** It lives in Redis, which
+  here runs with saving disabled — deliberately, because the burst jars are
+  disposable. But the monthly meter is billing state, and losing it mid-month
+  silently refunds every tenant. Before charging real money this wants Redis
+  with AOF enabled, or Postgres.
 
 - **Bundled Redis is a single point of failure**, with no persistence and no
   auth. Its blast radius is bounded by fail-open, but production wants Sentinel

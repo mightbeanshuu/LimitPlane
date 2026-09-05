@@ -40,7 +40,7 @@ type Deps struct {
 	Automations  *automations.Automations
 	Fingerprints *fingerprint.Fingerprints
 	IPPrints     *fingerprint.Fingerprints
-	Monthly      *limiter.MonthlyQuota
+	Monthly      limiter.MonthlyMeter
 	Auth         *authjwt.Auth
 	Orgs         *orgstore.Store
 	Tenants      *billing.TenantStore

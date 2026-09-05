@@ -63,7 +63,7 @@ type Decision struct {
 type Config struct {
 	Policy       *policy.Policy
 	Limiter      limiter.BurstLimiter
-	Monthly      *limiter.MonthlyQuota
+	Monthly      limiter.MonthlyMeter
 	Audit        *audit.Log
 	Automations  *automations.Automations
 	Fingerprints *fingerprint.Fingerprints
@@ -142,7 +142,25 @@ func (g *Gateway) Check(a CheckArgs) Decision {
 	// ---- step 3a: the monthly plan meter (skipped when the tier has no cap) ----
 	var month *limiter.MonthlyDecision
 	if plan.MonthlyQuota != nil {
-		m := g.cfg.Monthly.Check(limiter.MonthlyArgs{Key: plan.MonthlyKey, Quota: *plan.MonthlyQuota, Cost: plan.Cost})
+		m, err := g.cfg.Monthly.CheckMonthly(limiter.MonthlyArgs{
+			Key: plan.MonthlyKey, Quota: *plan.MonthlyQuota, Cost: plan.Cost,
+		})
+		if err != nil {
+			// The distributed meter is unreachable. Fail OPEN, exactly as the
+			// burst limiter does a few lines below: a rate limiter that cannot
+			// reach its store must not take the protected service down with it.
+			//
+			// The honest cost of this choice is that a Redis outage is an
+			// unmetered-traffic incident — plans are not enforced while it
+			// lasts. That is the deliberate trade, and it is why the error is
+			// surfaced on the decision rather than swallowed.
+			return Decision{
+				Allowed: true, Remaining: 0, Limit: plan.Capacity, TierLimit: plan.Capacity,
+				Cost: plan.Cost, CostClass: plan.CostClass,
+				TenantID: tenant.TenantID, Tier: tenant.Tier, MonthlyQuota: plan.MonthlyQuota,
+				Err: err,
+			}
+		}
 		month = &m
 	}
 

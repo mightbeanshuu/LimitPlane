@@ -225,4 +225,133 @@ var (
 	_ BurstLimiter = (*RedisFixedWindow)(nil)
 	_ BurstLimiter = (*RedisLuaFixedWindow)(nil)
 	_ BurstLimiter = (*RedisTokenBucket)(nil)
+
+	_ MonthlyMeter = (*MonthlyQuota)(nil)
+	_ MonthlyMeter = (*RedisMonthlyQuota)(nil)
 )
+
+// RedisMonthlyQuota — the plan meter, shared across every replica.
+//
+// This is the other half of the horizontal-scaling story, and it is the half
+// that actually costs money. RedisTokenBucket fixes the burst jar: get that
+// wrong and a tenant briefly exceeds their rate, which self-corrects within one
+// refill period. Get the MONTHLY meter wrong and a tenant on a 50,000-unit plan
+// consumes 150,000 across three replicas, every month, and you invoice them for
+// a third of what they used. It is billing state, so it is the one number that
+// has to be right.
+//
+// The window is a calendar month in UTC, and the reset is implicit: the month
+// id is part of the key, so the first request in September writes to a key that
+// simply does not exist yet. No cron job, no reset task, nothing to fail on the
+// 1st.
+type RedisMonthlyQuota struct {
+	client *redisclient.Client
+	now    Clock
+}
+
+func NewRedisMonthlyQuota(c *redisclient.Client, now Clock) *RedisMonthlyQuota {
+	return &RedisMonthlyQuota{client: c, now: clockOr(now)}
+}
+
+// luaMonthlyQuota is check-and-charge as one indivisible operation.
+//
+// The atomicity is the entire point. Reading the counter in Go, comparing it to
+// the quota and then writing it back is a read-modify-write across the network:
+// two replicas interleaving there both read 49,999, both decide there is room,
+// and both charge — so the plan is overspent by exactly the amount of
+// concurrency you have. That is the lost-update problem, and it lands hardest
+// at the quota boundary, which is the one moment the meter exists for.
+//
+// Note what it does NOT do: it never charges a request it refuses. A tenant at
+// their cap must not have their usage inflated by requests that were rejected,
+// or the number on their invoice stops matching the work they got.
+const luaMonthlyQuota = `
+local key   = KEYS[1] .. ":" .. ARGV[3]
+local quota = tonumber(ARGV[1])
+local cost  = tonumber(ARGV[2])
+local ttl   = tonumber(ARGV[4])
+
+local used = tonumber(redis.call("GET", key)) or 0
+local allowed = 0
+
+if used + cost <= quota then
+  used = used + cost
+  allowed = 1
+  -- SET with EX in one call: the value and its expiry can never be written
+  -- apart, so no month's counter can outlive its TTL and linger forever.
+  redis.call("SET", key, tostring(used), "EX", ttl)
+else
+  -- Refresh the TTL on a refusal too. The key already exists (something was
+  -- spent to reach the cap), and leaving it without a bounded lifetime is how
+  -- a key space that gains one entry per tenant per month never shrinks.
+  redis.call("EXPIRE", key, ttl)
+end
+
+return {allowed, tostring(used)}
+`
+
+// monthTTL is how long a month's counter survives.
+//
+// Long enough to comfortably outlive the month it measures, short enough that
+// the key space does not grow without bound: one key per tenant per month, so
+// without an expiry Redis accumulates every tenant that has ever existed. 70
+// days covers the longest month plus a wide margin for clock skew and for
+// anyone reading last month's usage after the fact.
+const monthTTLSeconds = 70 * 24 * 60 * 60
+
+// CheckMonthly charges one request against the tenant's plan.
+func (r *RedisMonthlyQuota) CheckMonthly(a MonthlyArgs) (MonthlyDecision, error) {
+	if a.Cost == 0 {
+		a.Cost = 1
+	}
+	now := r.now()
+
+	// The month id is computed HERE rather than inside the script, unlike the
+	// token bucket's clock. Redis's Lua sandbox has no date library — os is
+	// removed — so deriving a calendar month from redis.call("TIME") would mean
+	// writing civil-date arithmetic in Lua, which is a great deal of surface
+	// area for the one instant a year it would matter. Clock skew between
+	// replicas only changes the answer for requests landing within that skew of
+	// midnight on the 1st, and the worst case is a single request counted in
+	// the neighbouring month. That is a real and stated tradeoff, and it is
+	// several orders of magnitude smaller than the bug it replaces: every
+	// replica keeping a completely separate meter.
+	month := MonthID(now)
+
+	reply, err := r.client.Do("EVAL", luaMonthlyQuota, "1", a.Key,
+		strconv.FormatFloat(a.Quota, 'f', -1, 64),
+		strconv.FormatFloat(a.Cost, 'f', -1, 64),
+		month,
+		strconv.Itoa(monthTTLSeconds),
+	)
+	if err != nil {
+		return MonthlyDecision{}, err
+	}
+
+	parts, ok := reply.([]any)
+	if !ok || len(parts) != 2 {
+		return MonthlyDecision{}, fmt.Errorf("redis: monthly quota returned %T, want a 2-element array", reply)
+	}
+	allowed, ok := parts[0].(int64)
+	if !ok {
+		return MonthlyDecision{}, fmt.Errorf("redis: monthly quota returned a non-integer verdict")
+	}
+	// Returned as a string, not a Redis integer, because a cost can be
+	// fractional — the token-metering proxy charges real LLM usage against this
+	// same meter, and an integer reply would silently truncate it.
+	rawUsed, ok := parts[1].(string)
+	if !ok {
+		return MonthlyDecision{}, fmt.Errorf("redis: monthly quota returned a non-string usage value")
+	}
+	used, err := strconv.ParseFloat(rawUsed, 64)
+	if err != nil {
+		return MonthlyDecision{}, fmt.Errorf("redis: monthly quota returned unparseable usage %q: %w", rawUsed, err)
+	}
+
+	return MonthlyDecision{
+		Allowed:   allowed == 1,
+		Used:      used,
+		Remaining: math.Max(a.Quota-used, 0),
+		ResetsAt:  ResetsAt(now),
+	}, nil
+}

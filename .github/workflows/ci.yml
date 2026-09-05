@@ -62,6 +62,28 @@ jobs:
   test:
     name: Test (race + coverage)
     runs-on: ubuntu-latest
+
+    # A real Redis, not a mock.
+    #
+    # The correctness of the distributed limiters lives inside Lua scripts that
+    # Redis executes: the atomicity of check-and-charge, the server-side clock,
+    # the TTL handling. A mock that matches on EVAL and reimplements the logic
+    # in Go would assert nothing about the scripts — it would test the Go, which
+    # was never the risky part. Without this service the Redis tests skip, and a
+    # silently skipped test is worse than an absent one because it reads green.
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      REDIS_TEST_URL: redis://127.0.0.1:6379
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -79,6 +101,22 @@ jobs:
       # shared mutable state, and the race detector is what proves they aren't.
       - name: Unit + integration tests (race detector)
         run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+
+      # A skipped test reads as green. If the service container ever stops
+      # being wired up, these would quietly stop running and the distributed
+      # limiters would be untested again without anything going red.
+      - name: The Redis tests actually ran
+        run: |
+          set -euo pipefail
+          out=$(go test -count=1 -run Redis -v ./internal/limiter/ 2>&1)
+          echo "$out" | grep -E "^(=== RUN|--- (PASS|SKIP|FAIL))" || true
+          if echo "$out" | grep -q -- "--- SKIP"; then
+            echo "::error::the Redis integration tests were SKIPPED — REDIS_TEST_URL is not reaching the service container"
+            exit 1
+          fi
+          count=$(echo "$out" | grep -c -- "--- PASS" || true)
+          echo "$count Redis integration tests passed against a real server"
+          [ "$count" -ge 7 ] || { echo "::error::expected at least 7 Redis tests, got $count"; exit 1; }
 
       - name: Coverage summary
         run: |
@@ -451,6 +489,41 @@ jobs:
             -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
           [ "$before" = "$after" ] || { echo "::error::the pod restarted; the change was not applied live"; exit 1; }
           echo "limit changed with zero restarts ✓"
+
+      - name: The MONTHLY plan meter is enforced through the whole stack
+        run: |
+          set -euo pipefail
+          # Give the free tier a tiny monthly plan and a huge burst, so the
+          # burst jar cannot be what refuses the request — anything blocked
+          # here was blocked by the PLAN, which is the meter that just moved
+          # into Redis and the one that decides invoices.
+          kubectl -n limitplane patch rlp api-limits --type=merge \
+            -p '{"spec":{"tiers":{"free":{"capacity":10000,"refillPerSecond":1000,"monthlyQuota":5}}}}'
+
+          for i in $(seq 1 30); do
+            q=$(curl -s -D - -o /dev/null localhost:38080/v1/demo/ping 2>/dev/null \
+              | tr -d '\r' | awk -F': ' 'tolower($1)=="x-monthly-limit"{print $2}')
+            [ "${q%.*}" = "5" ] 2>/dev/null && break
+            sleep 1
+          done
+          echo "gateway reports X-Monthly-Limit: ${q:-unset}"
+          [ "${q%.*}" = "5" ] || { echo "::error::the new monthly quota never took effect"; exit 1; }
+
+          allowed=0; monthly_blocked=0
+          for i in $(seq 1 12); do
+            body=$(curl -s -o /tmp/b -w '%{http_code}' localhost:38080/v1/demo/ping)
+            if [ "$body" = "200" ]; then
+              allowed=$((allowed+1))
+            elif grep -q monthly_quota_exhausted /tmp/b; then
+              monthly_blocked=$((monthly_blocked+1))
+            fi
+          done
+          echo "monthly plan of 5 units: $allowed allowed, $monthly_blocked refused for quota"
+          [ "$monthly_blocked" -gt 0 ] || { echo "::error::the monthly plan was never enforced"; cat /tmp/b; exit 1; }
+          [ "$allowed" -le 5 ] || { echo "::error::$allowed requests allowed against a 5-unit plan"; exit 1; }
+
+          echo "--- and the refusal explains itself ---"
+          cat /tmp/b
 
       - name: Deleting a Tenant revokes its key
         run: |

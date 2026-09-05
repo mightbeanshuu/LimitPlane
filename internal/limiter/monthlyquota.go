@@ -6,7 +6,14 @@ import (
 	"time"
 )
 
-// MonthlyQuota — the "phone plan" limiter.
+// MonthlyQuota — the "phone plan" limiter, in process.
+//
+// SCALING CAVEAT, and it is the reason RedisMonthlyQuota exists: this meter
+// lives in ONE process. Three replicas each keep their own count, so a tenant
+// on a 50,000-unit plan can spend 150,000 — and unlike a burst overshoot, which
+// self-corrects within one refill period, this one compounds for a whole month
+// and is billing state. It also resets on restart, which silently refunds
+// everyone. Correct for a single instance; wrong the moment you scale.
 //
 // The token bucket answers "are you going too fast right now?" (seconds).
 // This answers "have you used up your plan this month?" (billing cycle). Real
@@ -58,6 +65,24 @@ type MonthlyArgs struct {
 	Key   string
 	Quota float64
 	Cost  float64
+}
+
+// MonthlyMeter is what the gateway actually depends on, so the plan meter can
+// be swapped for a distributed one exactly the way BurstLimiter allows for the
+// burst jar.
+//
+// It returns an error for the same reason BurstLimiter does: an in-memory meter
+// cannot fail, but one that talks to Redis can, and the caller has to decide
+// the policy for a meter that is unreachable. The gateway fails OPEN — an
+// outage in the rate limiter should cost you rate limiting, not availability.
+type MonthlyMeter interface {
+	CheckMonthly(MonthlyArgs) (MonthlyDecision, error)
+}
+
+// CheckMonthly adapts the in-process meter to the interface. It can never fail,
+// so the error is always nil.
+func (m *MonthlyQuota) CheckMonthly(a MonthlyArgs) (MonthlyDecision, error) {
+	return m.Check(a), nil
 }
 
 func (m *MonthlyQuota) Check(a MonthlyArgs) MonthlyDecision {

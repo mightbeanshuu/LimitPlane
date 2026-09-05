@@ -112,11 +112,15 @@ within noise of each other, because by then the socket dominates.
   ForwardAuth) so the gateway rate-limits **every service behind a cluster
   ingress without any of them changing a line of code** — 12 lines of Gateway
   API `SecurityPolicy`.
-- Made horizontal scaling **correct**, not just possible: replaced the
-  per-process token bucket with an **atomic Redis Lua bucket keyed on Redis's
-  own clock** (pod clock skew would otherwise mint free tokens), so N replicas
-  share one budget instead of granting N× the plan — measured with a 3-replica
-  compose harness that fails the build if the limit drifts.
+- Made horizontal scaling **correct**, not just possible: replaced both
+  per-process meters with **atomic Redis Lua scripts** — a token bucket keyed on
+  Redis's own clock (pod skew would otherwise mint free tokens) and a monthly
+  plan meter whose key embeds the calendar month, making the reset on the 1st
+  implicit rather than a cron job. Without this, three replicas grant every
+  tenant 3× their plan; the monthly half is the expensive one, because it is
+  billing state that compounds rather than a rate that self-corrects. Verified
+  by concurrency tests firing 200 requests at a 50-unit plan and asserting
+  exactly 50 land, run against a real Redis in CI.
 - Wrote the **Prometheus exporter by hand** (still zero dependencies) with a
   hard **cardinality cap** — per-tenant series are unbounded by design
   (`anon:<ip>` per visitor), so unnamed tenants are excluded and named ones
@@ -266,11 +270,12 @@ that was a planning note in `sessions.md` that never became code.
 
 **Honest limitations — volunteer these, they are the good follow-ups:**
 
-- **Burst limiting is now cluster-correct; the MONTHLY meter is not.** With
-  `REDIS_URL` set, N replicas share one token bucket (measured). The monthly
-  quota meter was not moved — it is still per-process, so N replicas can let a
-  tenant exceed a monthly plan by up to N×, and it resets on restart. Say this
-  before you are asked: it is billing state, and nobody should charge on it yet.
+- **Both meters are cluster-correct, but the monthly counter is not durable.**
+  Burst jar and monthly plan both live in Redis when `REDIS_URL` is set, proven
+  by integration tests against a real server. What is still missing is
+  persistence: that Redis runs with saving disabled, so losing it mid-month
+  silently refunds every tenant. Fine for a demo, not for invoicing — say so
+  before you are asked.
 - **Redis fails open.** If it is unreachable the gateway serves traffic
   *unlimited* rather than refusing it. That is the deliberate trade — an outage
   in the rate limiter should cost you rate limiting, not availability — but it
