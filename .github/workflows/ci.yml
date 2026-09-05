@@ -24,7 +24,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          # No caching, because there is nothing to cache. setup-go keys its
+          # cache on go.sum, and this project has none — zero third-party
+          # dependencies is the whole premise. With cache: true every run logs
+          # "Dependencies file is not found ... Supported file pattern: go.sum",
+          # which reads like a broken build to anyone glancing at the logs.
+          cache: false
 
       - name: gofmt
         run: |
@@ -62,7 +67,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          # No caching, because there is nothing to cache. setup-go keys its
+          # cache on go.sum, and this project has none — zero third-party
+          # dependencies is the whole premise. With cache: true every run logs
+          # "Dependencies file is not found ... Supported file pattern: go.sum",
+          # which reads like a broken build to anyone glancing at the logs.
+          cache: false
 
       # -race is not optional here. The whole risk of porting off Node's single
       # threaded event loop is that maps which were safe by accident become
@@ -93,7 +103,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          # No caching, because there is nothing to cache. setup-go keys its
+          # cache on go.sum, and this project has none — zero third-party
+          # dependencies is the whole premise. With cache: true every run logs
+          # "Dependencies file is not found ... Supported file pattern: go.sum",
+          # which reads like a broken build to anyone glancing at the logs.
+          cache: false
 
       # Tests exercise the handler; this proves the SHIPPED ARTEFACT boots,
       # embeds its dashboard, and rate-limits real traffic over a real socket.
@@ -282,7 +297,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          # No caching, because there is nothing to cache. setup-go keys its
+          # cache on go.sum, and this project has none — zero third-party
+          # dependencies is the whole premise. With cache: true every run logs
+          # "Dependencies file is not found ... Supported file pattern: go.sum",
+          # which reads like a broken build to anyone glancing at the logs.
+          cache: false
 
       - name: Create a kind cluster
         uses: helm/kind-action@v1
