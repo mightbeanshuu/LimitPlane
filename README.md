@@ -16,7 +16,7 @@ product surface.
 
 Site: **https://limitplane.vercel.app** · Gateway: **https://limitplane.onrender.com**
 Kubernetes: **[operator, CRDs and the learning guide](docs/KUBERNETES.md)** ·
-`make kind-demo`
+`make kind-demo` · eBPF: **[XDP fast path](xdp/README.md)**
 
 Modern APIs have a new problem: not all requests cost the same. A health-check
 ping costs microseconds; an AI inference call (an NSFW scan, a GenAI
@@ -515,6 +515,23 @@ digest cannot.
 **[docs/KUBERNETES.md](docs/KUBERNETES.md)** is a twelve-lesson walkthrough of
 every Kubernetes concept this uses — what it is, where it lives here, a command
 that makes it visible, and the interview question it answers.
+
+## XDP fast path (eBPF)
+
+An optional second layer in front of the gateway, in [`xdp/`](xdp/README.md).
+An XDP program in the network driver drops packets from addresses the
+autopilot has put in cooldown, and from per-IP floods, **before the kernel
+allocates an skb for them** — a banned client stops costing a handshake, a
+goroutine and a 429. A small agent copies the gateway's cooldowns into a BPF
+map every second; everything that needs meaning (tenants, cost classes, plans)
+stays in Go.
+
+```bash
+sudo bash xdp/test.sh   # netns + veth, real kernel: bans, v6, expiry, flood, gateway sync
+```
+
+It is its own Go module (it uses `cilium/ebpf`), so the gateway stays
+stdlib-only. Linux only; see the README there for the design and its limits.
 
 ## Deploy
 
