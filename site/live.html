@@ -2,278 +2,502 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>LimitPlane Live XDP Test</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap" rel="stylesheet">
 <style>
-  /* Same tokens as the landing page. Layout: control bar, then three lanes (attacker | kernel | visitor), then the raw log. */
+  /* Light, framed engineering look: a bordered centre column, a dotted grid
+     behind the hero, heavy sans headlines with a blue second line, mono labels,
+     a divided stat strip. Layout: hero | stats | packet-flow diagram |
+     timeline + three lanes | log. */
   :root{
-    --bg:#0b1120; --panel:#111a2e; --panel2:#0d1526; --line:#1e293b;
-    --text:#e2e8f0; --dim:#94a3b8; --faint:#64748b;
-    --sky:#38bdf8; --teal:#2dd4bf; --rose:#f43f5e; --amber:#fbbf24;
-    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
-    --display:'Bricolage Grotesque',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-    color-scheme:dark;
+    --bg:#fbfbfc; --card:#ffffff; --ink:#0f172b; --body:#62748e; --mute:#90a1b9;
+    --rule:#e4e7ec; --soft:#f1f3f7; --blue:#3146f2; --blue2:#155dfc; --glow:rgba(37,99,235,.22);
+    --ok:#059669; --okbg:#ecfdf5; --warn:#d97706; --warnbg:#fffbeb; --bad:#dc2626; --badbg:#fef2f2;
+    --term:#0b1220; --termtx:#cbd5e1;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    color-scheme:light;
   }
-  @media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
-    --bg:#f2f5fa; --panel:#ffffff; --panel2:#f6f8fc; --line:#dbe3ee;
-    --text:#1c2940; --dim:#5d6b84; --faint:#8b98ae;
-    --sky:#0284c7; --teal:#0d9488; --rose:#e11d48; --amber:#b45309; color-scheme:light}}
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+    --bg:#0a0d14; --card:#0f1420; --ink:#eef2f8; --body:#a3b0c4; --mute:#6f7f96;
+    --rule:#1e2635; --soft:#141b29; --blue:#7c89ff; --blue2:#5b85ff; --glow:rgba(91,133,255,.30);
+    --ok:#34d399; --okbg:rgba(52,211,153,.12); --warn:#fbbf24; --warnbg:rgba(251,191,36,.12); --bad:#f87171; --badbg:rgba(248,113,113,.12);
+    color-scheme:dark}}
+  :root[data-theme="dark"]{
+    --bg:#0a0d14; --card:#0f1420; --ink:#eef2f8; --body:#a3b0c4; --mute:#6f7f96;
+    --rule:#1e2635; --soft:#141b29; --blue:#7c89ff; --blue2:#5b85ff; --glow:rgba(91,133,255,.30);
+    --ok:#34d399; --okbg:rgba(52,211,153,.12); --warn:#fbbf24; --warnbg:rgba(251,191,36,.12); --bad:#f87171; --badbg:rgba(248,113,113,.12);
+    color-scheme:dark}
   *{margin:0;padding:0;box-sizing:border-box}
-  body{background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
-  a{color:var(--sky);text-decoration:none}
-  .wrap{max-width:1120px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-left,0px)) 64px max(16px,env(safe-area-inset-right,0px))}
-  header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between;margin-bottom:20px}
-  h1{font:700 clamp(26px,4.5vw,40px)/1.1 var(--display);letter-spacing:-.01em}
-  .sub{color:var(--dim);max-width:62ch;margin-top:6px}
-  .back{font-size:14px}
-  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:16px}
-  .pill{font:600 12px/1 var(--mono);text-transform:uppercase;letter-spacing:.08em;padding:6px 10px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
-  .pill.running{color:var(--amber);border-color:var(--amber)}
-  .pill.done{color:var(--teal);border-color:var(--teal)}
-  .pill.failed{color:var(--rose);border-color:var(--rose)}
-  .pill.replay{color:var(--sky);border-color:var(--sky)}
-  .bar .spacer{flex:1}
-  .bar small{color:var(--faint)}
-  button,input{font:inherit}
-  .btn{background:var(--sky);color:#04121f;border:0;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer}
-  .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line);font-weight:600}
-  .btn:disabled{opacity:.5;cursor:not-allowed}
-  .btn:focus-visible,input:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
-  .err{color:var(--rose);font-size:14px;width:100%}
-  .stages{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
-  .stage{font-size:13px;padding:5px 10px;border-radius:7px;background:var(--panel2);border:1px solid var(--line);color:var(--faint)}
-  .stage.seen{color:var(--dim)}
-  .stage.now{color:var(--text);border-color:var(--sky);background:var(--panel)}
-  .lanes{display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:14px}
-  @media (max-width:860px){.lanes{grid-template-columns:1fr}}
-  .lane{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
-  .lane h2{font:700 18px/1.2 var(--display);margin-bottom:2px}
-  .lane .who{font:12px/1.4 var(--mono);color:var(--faint);margin-bottom:12px;overflow-wrap:anywhere}
-  .lane.kernel{border-color:var(--sky)}
-  .codes{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:10px;min-height:22px}
-  .code{font:600 11px/1 var(--mono);padding:4px 5px;border-radius:4px;background:var(--panel2);color:var(--faint)}
-  .code.c2{background:rgba(45,212,191,.16);color:var(--teal)}
-  .code.c4{background:rgba(251,191,36,.16);color:var(--amber)}
-  .code.c0{background:rgba(244,63,94,.16);color:var(--rose)}
-  .legend{font-size:12px;color:var(--faint);display:flex;flex-wrap:wrap;gap:4px 12px;margin-bottom:10px}
-  .facts{display:grid;gap:6px;font-size:14px}
-  .facts div{display:flex;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:6px}
-  .facts span:last-child{font-family:var(--mono);text-align:right;overflow-wrap:anywhere}
-  .meter{margin-bottom:12px}
-  .meter .lbl{display:flex;justify-content:space-between;font-size:13px;color:var(--dim);margin-bottom:4px}
-  .meter .lbl b{font:700 20px/1 var(--mono);color:var(--text);font-variant-numeric:tabular-nums}
-  .track{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden}
-  .fill{height:100%;width:100%;border-radius:99px;transform-origin:left;transform:scaleX(0);transition:transform .4s}
-  .fill.pass{background:var(--teal)} .fill.ban{background:var(--rose)} .fill.rate{background:var(--amber)}
-  .banner{font:600 14px/1.4 var(--mono);padding:10px 12px;border-radius:8px;margin-top:10px;border:1px dashed var(--line);color:var(--faint)}
-  .banner.on{border-style:solid;border-color:var(--rose);color:var(--rose);background:rgba(244,63,94,.08)}
-  .visits{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:28px}
-  .ok{font:700 13px/1 var(--mono);padding:7px 9px;border-radius:7px;background:rgba(45,212,191,.16);color:var(--teal)}
-  .bad{background:rgba(244,63,94,.16);color:var(--rose)}
-  details.log{margin-top:16px;background:#0a0f1c;border:1px solid var(--line);border-radius:12px}
-  details.log summary{cursor:pointer;padding:10px 14px;color:#cbd5e1;font-size:14px}
-  pre#log{color:#cbd5e1;font:12px/1.5 var(--mono);padding:0 14px 14px;max-height:420px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
-  .note{color:var(--faint);font-size:13px;margin-top:14px;max-width:80ch}
-  .btn.big{font-size:16px;padding:12px 22px}
-  .left{color:var(--faint);font-size:13px}
-  .progress{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:16px}
-  .progress .row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 16px;margin-bottom:8px}
-  .progress .step{font-weight:600}
-  .progress .eta{color:var(--dim);font:13px/1.4 var(--mono)}
-  .progress .track{height:10px}
-  .progress .fill{background:var(--sky)}
-  .explain{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:14px}
-  .explain p{font-size:14px;color:var(--dim);min-width:0}
-  .explain b{color:var(--text)}
-  @media (max-width:860px){.explain{grid-template-columns:1fr}}
-  @media (prefers-reduced-motion:reduce){.fill{transition:none}}
+  body{background:var(--bg);color:var(--ink);font:16px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+  a{color:var(--blue2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .frame{max-width:1200px;margin:0 auto;border-inline:1px solid var(--rule)}
+  .pad{padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px))}
+  @media (max-width:600px){.pad{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}}
+
+  nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:16px;border-bottom:1px solid var(--rule)}
+  .brand{font:800 17px/1 var(--sans);color:var(--ink);letter-spacing:-.01em}
+  .brand span{color:var(--blue)}
+  nav .links{display:flex;gap:20px;font-size:14px;font-weight:600}
+  nav .links a{color:var(--ink)}
+
+  .hero{position:relative;padding-block:60px 44px;overflow:hidden}
+  .hero::after{content:"";position:absolute;inset:0 0 0 48%;pointer-events:none;
+    background-image:radial-gradient(var(--rule) 1.6px,transparent 1.7px);background-size:22px 22px;
+    -webkit-mask-image:linear-gradient(90deg,transparent,#000 45%);mask-image:linear-gradient(90deg,transparent,#000 45%)}
+  .hero > *{position:relative;z-index:1}
+  @media (prefers-reduced-motion:no-preference){
+    .hero > *{animation:rise .7s cubic-bezier(.2,.7,.2,1) both}
+    .hero > :nth-child(2){animation-delay:.06s} .hero > :nth-child(3){animation-delay:.12s}
+    .hero > :nth-child(4){animation-delay:.18s} .hero > :nth-child(5){animation-delay:.24s}
+  }
+  @keyframes rise{from{transform:translateY(10px)}to{transform:none}}
+  .badge{display:inline-flex;align-items:center;gap:10px;border:1px solid var(--rule);background:var(--card);border-radius:999px;padding:4px 14px 4px 4px;font:13px/1 var(--mono);color:var(--ink)}
+  .badge b{background:var(--blue);color:#fff;border-radius:999px;padding:5px 9px;font:700 10px/1 var(--mono);letter-spacing:.08em}
+  h1{font:800 clamp(34px,6vw,58px)/1.06 var(--sans);letter-spacing:-.025em;margin:22px 0 18px;text-wrap:balance;max-width:17ch}
+  h1 .b{color:var(--blue);display:block}
+  .lede{font-size:19px;color:var(--body);max-width:56ch;margin-bottom:28px}
+  .ctas{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+  .btn{display:inline-flex;align-items:center;gap:8px;font:700 15px/1 var(--sans);border-radius:8px;padding:14px 22px;cursor:pointer;border:1px solid transparent;transition:transform .15s,box-shadow .15s}
+  .btn.pri{background:var(--blue2);color:#fff;box-shadow:0 0 20px var(--glow)}
+  .btn.pri:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 0 28px var(--glow)}
+  .btn.pri:disabled{opacity:.55;cursor:not-allowed;box-shadow:none}
+  .btn.sec{background:var(--card);color:var(--ink);border-color:var(--rule)}
+  .btn:focus-visible{outline:2px solid var(--blue2);outline-offset:3px}
+  .status{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin-top:22px;font:13px/1.4 var(--mono);color:var(--body)}
+  .status button{font:inherit;color:var(--blue2);background:none;border:0;cursor:pointer;padding:0}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mute);margin-right:8px;vertical-align:1px}
+  .dot.live{background:var(--blue2);box-shadow:0 0 0 4px var(--glow)}
+  .dot.done{background:var(--ok)} .dot.failed{background:var(--bad)}
+  @media (prefers-reduced-motion:no-preference){.dot.live{animation:pulse 1.4s ease-in-out infinite}}
+  @keyframes pulse{50%{box-shadow:0 0 0 8px transparent}}
+
+  .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-block:1px solid var(--rule)}
+  .stat{padding:20px 24px;border-right:1px solid var(--rule);min-width:0}
+  .stat:last-child{border-right:0}
+  .stat b{display:block;font:800 26px/1.2 var(--sans);letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .stat span{font:12px/1.4 var(--mono);color:var(--body)}
+  @media (max-width:860px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stat:nth-child(2){border-right:0}.stat:nth-child(-n+2){border-bottom:1px solid var(--rule)}}
+
+  /* ---- packet-flow diagram ---- */
+  .flow{border-bottom:1px solid var(--rule);padding-block:26px 18px}
+  .flowhead{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 20px;align-items:baseline;margin-bottom:8px}
+  .flowhead h2{font:800 22px/1.2 var(--sans);letter-spacing:-.01em}
+  .phase{font:600 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:7px 10px;border-radius:999px;border:1px solid var(--rule);color:var(--body);transition:color .3s,border-color .3s,background .3s}
+  .phase.attack{color:var(--warn);border-color:var(--warn);background:var(--warnbg)}
+  .phase.banned,.phase.flood{color:var(--bad);border-color:var(--bad);background:var(--badbg)}
+  .phase.calm{color:var(--ok);border-color:var(--ok);background:var(--okbg)}
+  .svgwrap{overflow-x:auto}
+  svg.net{display:block;width:100%;min-width:640px;height:auto}
+  svg.net .box{fill:var(--card);stroke:var(--rule);stroke-width:1.2}
+  svg.net .box.lp{stroke:var(--blue2);stroke-width:1.6}
+  svg.net .t{fill:var(--ink);font:700 15px var(--sans)}
+  svg.net .s{fill:var(--mute);font:11px var(--mono)}
+  svg.net .wire{stroke:var(--rule);stroke-width:2;fill:none;stroke-dasharray:3 5}
+  svg.net .shield{fill:var(--soft);stroke:var(--rule);stroke-width:1.2;transition:fill .3s,stroke .3s}
+  svg.net .shield.hot{fill:var(--badbg);stroke:var(--bad)}
+  svg.net .shieldlbl{fill:var(--body);font:600 11px var(--mono);letter-spacing:.06em}
+  svg.net .droplbl{fill:var(--bad);font:700 12px var(--mono);letter-spacing:.08em;opacity:0;transition:opacity .3s}
+  svg.net .droplbl.on{opacity:1}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 18px;font:12px/1.4 var(--mono);color:var(--body);margin-top:8px}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:0}
+
+  .main{display:grid;grid-template-columns:290px minmax(0,1fr);border-bottom:1px solid var(--rule)}
+  @media (max-width:960px){.main{grid-template-columns:1fr}}
+  .timeline{padding:28px 24px;border-right:1px solid var(--rule)}
+  @media (max-width:960px){.timeline{border-right:0;border-bottom:1px solid var(--rule)}}
+  .eyebrow{font:600 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--mute);margin-bottom:14px}
+  ol.steps{list-style:none;position:relative;margin-top:18px}
+  ol.steps li{position:relative;padding:0 0 18px 30px;font-size:14px;color:var(--mute);transition:color .3s}
+  ol.steps li::before{content:"";position:absolute;left:5px;top:10px;bottom:-4px;width:1px;background:var(--rule)}
+  ol.steps li:last-child::before{display:none}
+  ol.steps li i{position:absolute;left:0;top:4px;width:11px;height:11px;border-radius:50%;border:1.5px solid var(--rule);background:var(--bg);transition:background .3s,border-color .3s}
+  ol.steps li.done{color:var(--body)}
+  ol.steps li.done i{background:var(--ok);border-color:var(--ok)}
+  ol.steps li.now{color:var(--ink);font-weight:700}
+  ol.steps li.now i{background:var(--blue2);border-color:var(--blue2);box-shadow:0 0 0 4px var(--glow)}
+  @media (prefers-reduced-motion:no-preference){ol.steps li.now i{animation:pulse 1.4s ease-in-out infinite}}
+  .bar{height:6px;border-radius:99px;background:var(--soft);overflow:hidden;margin:4px 0 6px}
+  .bar div{height:100%;width:100%;background:var(--blue2);transform-origin:left;transform:scaleX(0);transition:transform .5s}
+  .eta{font:12px/1.4 var(--mono);color:var(--body);min-height:17px}
+
+  .lanes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  @media (max-width:1100px){.lanes{grid-template-columns:1fr}}
+  .lane{padding:28px 24px;border-right:1px solid var(--rule);min-width:0}
+  .lane:last-child{border-right:0}
+  @media (max-width:1100px){.lane{border-right:0;border-bottom:1px solid var(--rule)}.lane:last-child{border-bottom:0}}
+  .lane h2{font:800 20px/1.2 var(--sans);letter-spacing:-.01em}
+  .lane .who{font:12px/1.5 var(--mono);color:var(--mute);margin:4px 0 12px;overflow-wrap:anywhere}
+  .lane p.what{font-size:14px;color:var(--body);margin-bottom:16px}
+  .codes{display:flex;flex-wrap:wrap;gap:3px;min-height:22px;margin-bottom:8px}
+  .c{font:600 11px/1 var(--mono);padding:4px 5px;border-radius:4px;background:var(--soft);color:var(--mute)}
+  @media (prefers-reduced-motion:no-preference){.c{animation:pop .25s ease-out}}
+  @keyframes pop{from{transform:scale(.6)}to{transform:none}}
+  .c.c2{background:var(--okbg);color:var(--ok)} .c.c4{background:var(--warnbg);color:var(--warn)} .c.c0{background:var(--badbg);color:var(--bad)}
+  .key{display:flex;flex-wrap:wrap;gap:4px 12px;font:11px/1.4 var(--mono);color:var(--mute);margin-bottom:12px}
+  .key em{font-style:normal}
+  dl.kv div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--rule);font-size:14px}
+  dl.kv dt{color:var(--body)}
+  dl.kv dd{font:600 13px/1.5 var(--mono);text-align:right;overflow-wrap:anywhere}
+  .meter{margin-bottom:14px}
+  .meter .lbl{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--body);margin-bottom:5px}
+  .meter b{font:800 22px/1 var(--sans);color:var(--ink);font-variant-numeric:tabular-nums}
+  .track{height:8px;border-radius:99px;background:var(--soft);overflow:hidden}
+  .fill{height:100%;width:100%;border-radius:99px;transform-origin:left;transform:scaleX(0);transition:transform .6s cubic-bezier(.2,.7,.2,1)}
+  .fill.p{background:var(--ok)} .fill.b{background:var(--bad)} .fill.r{background:var(--warn)}
+  .banner{margin-top:6px;font:600 13px/1.4 var(--mono);padding:10px 12px;border-radius:8px;border:1px dashed var(--rule);color:var(--mute);transition:all .3s}
+  .banner.on{border:1px solid var(--bad);background:var(--badbg);color:var(--bad)}
+  .visits{display:flex;flex-wrap:wrap;gap:6px;min-height:30px;margin-bottom:12px}
+  .v{font:700 13px/1 var(--mono);padding:8px 10px;border-radius:7px;background:var(--okbg);color:var(--ok)}
+  @media (prefers-reduced-motion:no-preference){.v{animation:pop .3s ease-out}}
+  .v.bad{background:var(--badbg);color:var(--bad)}
+  @media (prefers-reduced-motion:reduce){.fill,.bar div{transition:none}}
+
+  details.log{border-bottom:1px solid var(--rule)}
+  details.log summary{cursor:pointer;padding-block:18px;font-weight:700;font-size:15px;list-style:none}
+  details.log summary::-webkit-details-marker{display:none}
+  details.log summary::after{content:"  +";color:var(--blue2);font-family:var(--mono)}
+  details.log[open] summary::after{content:"  \2212"}
+  details.log summary:focus-visible{outline:2px solid var(--blue2);outline-offset:2px}
+  pre#log{background:var(--term);color:var(--termtx);font:12px/1.55 var(--mono);padding:16px;border-radius:10px;max-height:460px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:24px}
+  footer{padding-block:24px 40px;font-size:13px;color:var(--body);max-width:90ch}
 </style>
 </head>
 <body>
 <script>window.LP_GATEWAY = "https://limitplane.onrender.com";</script>
-<div class="wrap">
-  <header>
-    <div>
-      <a class="back" href="/">&larr; LimitPlane</a>
-      <h1>Live XDP test on Azure</h1>
-      <p class="sub">One click builds two Azure VMs: a shop behind LimitPlane with the eBPF fast path, and an attacker. The attacker floods it and forges another visitor's address, gets banned, and is dropped in the kernel. Then both VMs are deleted.</p>
+<div class="frame">
+  <nav class="pad">
+    <a class="brand" href="/">Limit<span>Plane</span></a>
+    <div class="links"><a href="/dashboard">Dashboard</a><a href="https://github.com/mightbeanshuu/LimitPlane/tree/main/xdp">Code</a></div>
+  </nav>
+
+  <section class="hero pad">
+    <span class="badge"><b>LIVE</b>eBPF / XDP on real Azure VMs</span>
+    <h1>Watch an attacker get dropped in the kernel.<span class="b">One click. Two VMs. Six minutes.</span></h1>
+    <p class="lede">The button builds a shop behind LimitPlane and an attacker that floods it while pretending to be someone else. LimitPlane bans it, the ban reaches the network card's eBPF program within a second, and its packets stop there. Then both VMs are deleted.</p>
+    <div class="ctas">
+      <button class="btn pri" id="run" disabled>Run live test &rarr;</button>
+      <a class="btn sec" href="https://github.com/mightbeanshuu/LimitPlane/actions/workflows/xdp-live.yml" target="_blank" rel="noopener">Watch on GitHub Actions</a>
     </div>
-  </header>
+    <div class="status"><span><i class="dot" id="dot"></i><span id="statusText">Replaying a recorded run from 22 Oct 2026</span></span><span id="left"></span><button id="again" type="button" hidden>Replay again</button></div>
+  </section>
 
-  <div class="bar">
-    <span id="status" class="pill replay">Replay</span>
-    <span id="statusText">Showing the recorded run from 22 Oct 2026.</span>
-    <span class="spacer"></span>
-    <span class="left" id="left"></span>
-    <button class="btn big" id="run" disabled>Run live test</button>
-    <a id="actions" class="btn ghost" href="https://github.com/mightbeanshuu/LimitPlane/actions/workflows/xdp-live.yml" target="_blank" rel="noopener">GitHub Actions</a>
+  <div class="stats">
+    <div class="stat"><b id="sBan">&ndash;</b><span>attack start to kernel ban</span></div>
+    <div class="stat"><b id="sDrop">&ndash;</b><span>attacker packets dropped while banned</span></div>
+    <div class="stat"><b id="sFlood">&ndash;</b><span>flood packets dropped by the kernel</span></div>
+    <div class="stat"><b id="sVisit">&ndash;</b><span>normal visitor, during the attack</span></div>
   </div>
 
-  <div class="progress">
-    <div class="row"><span class="step" id="step">Press Run to start a real test on Azure. It takes about 6 minutes.</span><span class="eta" id="eta"></span></div>
-    <div class="track"><div class="fill" id="pbar"></div></div>
+  <section class="flow pad" aria-label="Packet flow">
+    <div class="flowhead"><h2>Where every packet goes</h2><span class="phase" id="phase">waiting</span></div>
+    <div class="svgwrap">
+      <svg class="net" id="net" viewBox="0 0 1000 250" role="img" aria-label="Attacker and visitor packets pass the network card, then LimitPlane, then the shop">
+        <path class="wire" d="M180 62 L350 100 L480 125 L800 125"/>
+        <path class="wire" d="M180 188 L350 150 L480 125"/>
+        <rect class="box" x="20" y="34" width="160" height="56" rx="8"/>
+        <text class="t" x="36" y="60">Attacker</text><text class="s" x="36" y="78" id="dAtk">second VM</text>
+        <rect class="box" x="20" y="160" width="160" height="56" rx="8"/>
+        <text class="t" x="36" y="186">Normal visitor</text><text class="s" x="36" y="204">the faked address</text>
+        <rect class="shield" id="shield" x="342" y="22" width="16" height="206" rx="8"/>
+        <text class="shieldlbl" x="350" y="16" text-anchor="middle">NETWORK CARD · XDP</text>
+        <text class="droplbl" id="droplbl" x="350" y="245" text-anchor="middle">XDP_DROP</text>
+        <g id="packets"></g>
+        <rect class="box lp" x="480" y="97" width="200" height="56" rx="8"/>
+        <text class="t" x="496" y="123">LimitPlane</text><text class="s" x="496" y="141">5 checks, then 200 or 429</text>
+        <rect class="box" x="800" y="97" width="170" height="56" rx="8"/>
+        <text class="t" x="816" y="123">XYZ Shop</text><text class="s" x="816" y="141">the tenant site</text>
+      </svg>
+    </div>
+    <div class="legend"><span><i style="background:var(--ok)"></i>served</span><span><i style="background:var(--warn)"></i>429, sent back by LimitPlane</span><span><i style="background:var(--bad)"></i>dropped by the kernel</span></div>
+  </section>
+
+  <div class="main">
+    <aside class="timeline">
+      <p class="eyebrow">Progress</p>
+      <div class="bar"><div id="pbar"></div></div>
+      <p class="eta" id="eta"></p>
+      <ol class="steps" id="steps"></ol>
+    </aside>
+
+    <div class="lanes">
+      <section class="lane">
+        <h2>Attacker</h2>
+        <p class="who" id="atkWho">second VM</p>
+        <p class="what">Sends requests as fast as it can and fakes its address with an X-Forwarded-For header.</p>
+        <div class="key"><em style="color:var(--ok)">200 served</em><em style="color:var(--warn)">429 limited</em><em style="color:var(--bad)">000 no answer</em></div>
+        <div class="codes" id="codes"></div>
+        <dl class="kv">
+          <div><dt>While banned</dt><dd id="atkBanned">pending</dd></div>
+          <div><dt>Ping while banned</dt><dd id="ping">pending</dd></div>
+          <div><dt>UDP flood</dt><dd id="flood">pending</dd></div>
+          <div><dt>After the ban ends</dt><dd id="after">pending</dd></div>
+        </dl>
+      </section>
+
+      <section class="lane">
+        <h2>Kernel</h2>
+        <p class="who" id="kWho">site VM</p>
+        <p class="what">The eBPF program on the network card. It counts every packet and drops banned ones before Linux sees them.</p>
+        <div class="meter"><div class="lbl"><span>passed</span><b id="nPass">0</b></div><div class="track"><div class="fill p" id="bPass"></div></div></div>
+        <div class="meter"><div class="lbl"><span>dropped, banned address</span><b id="nBan">0</b></div><div class="track"><div class="fill b" id="bBan"></div></div></div>
+        <div class="meter"><div class="lbl"><span>dropped, packet flood</span><b id="nRate">0</b></div><div class="track"><div class="fill r" id="bRate"></div></div></div>
+        <div class="banner" id="banner">ban list empty</div>
+      </section>
+
+      <section class="lane">
+        <h2>Normal visitor</h2>
+        <p class="who">the address the attacker pretends to be</p>
+        <p class="what">If the fake header worked, this visitor would be banned. It keeps getting the shop instead.</p>
+        <div class="visits" id="visits"></div>
+        <dl class="kv">
+          <div><dt>Who got banned</dt><dd id="banned">nobody yet</dd></div>
+          <div><dt>Rate limit per visitor</dt><dd id="hdr">pending</dd></div>
+        </dl>
+      </section>
+    </div>
   </div>
 
-  <div class="explain">
-    <p><b>Attacker.</b> A second VM sends requests as fast as it can and lies about who it is (a fake X-Forwarded-For). Green got through, amber was rate limited, red got no answer at all.</p>
-    <p><b>Kernel.</b> LimitPlane bans the attacker, and within a second the ban is copied into the network card's eBPF program. From then on its packets are dropped before Linux or the app see them.</p>
-    <p><b>Normal visitor.</b> The address the attacker pretended to be. It keeps getting the shop the whole time, which shows the fake header did not work.</p>
+  <div class="pad">
+    <details class="log">
+      <summary>Full session log, every command and its output</summary>
+      <pre id="log"></pre>
+    </details>
+    <footer>Anyone can start a run. Each one creates and deletes two real VMs, so there is one run at a time and five a day, and the button is rate limited by LimitPlane itself. If someone else started a run, you are watching theirs. Scripts: <a href="https://github.com/mightbeanshuu/LimitPlane/tree/main/xdp/azure">xdp/azure</a>.</footer>
   </div>
-
-  <details class="log" id="stagesBox" style="margin:0 0 14px"><summary>Every step of this run</summary><div class="stages" id="stages" style="padding:0 14px 14px"></div></details>
-
-  <div class="lanes">
-    <section class="lane">
-      <h2>Attacker</h2>
-      <p class="who" id="atkWho">second VM</p>
-      <div class="legend"><span>HTTP per request:</span><span style="color:var(--teal)">200 served</span><span style="color:var(--amber)">429 limited</span><span style="color:var(--rose)">000 no answer</span></div>
-      <div class="codes" id="codes"></div>
-      <div class="facts">
-        <div><span>Forged X-Forwarded-For</span><span id="forged">none yet</span></div>
-        <div><span>While banned</span><span id="atkBanned">pending</span></div>
-        <div><span>Ping while banned</span><span id="ping">pending</span></div>
-        <div><span>UDP flood</span><span id="flood">pending</span></div>
-        <div><span>After the cooldown</span><span id="after">pending</span></div>
-      </div>
-    </section>
-
-    <section class="lane kernel">
-      <h2>Kernel (XDP on eth0)</h2>
-      <p class="who" id="kWho">site VM</p>
-      <div class="meter"><div class="lbl"><span>passed</span><b id="nPass">0</b></div><div class="track"><div class="fill pass" id="bPass"></div></div></div>
-      <div class="meter"><div class="lbl"><span>dropped: banned IP</span><b id="nBan">0</b></div><div class="track"><div class="fill ban" id="bBan"></div></div></div>
-      <div class="meter"><div class="lbl"><span>dropped: packet flood</span><b id="nRate">0</b></div><div class="track"><div class="fill rate" id="bRate"></div></div></div>
-      <div class="banner" id="banner">ban list empty</div>
-    </section>
-
-    <section class="lane">
-      <h2>Normal visitor</h2>
-      <p class="who" id="visWho">its address is the one the attacker forges</p>
-      <div class="visits" id="visits"></div>
-      <div class="facts">
-        <div><span>Who got banned</span><span id="banned">nobody yet</span></div>
-        <div><span>Rate-limit headers</span><span id="hdr">pending</span></div>
-      </div>
-    </section>
-  </div>
-
-  <details class="log" id="logBox">
-    <summary>Full session log (every command and its output)</summary>
-    <pre id="log"></pre>
-  </details>
-  <p class="note">Anyone can start a run. Each one creates and deletes two real VMs, so there is one run at a time and five a day, and the button itself is rate limited by LimitPlane. If a run is already going, this page shows it. The scripts are in <a href="https://github.com/mightbeanshuu/LimitPlane/tree/main/xdp/azure">xdp/azure</a>.</p>
 </div>
 
 <script>
 (() => {
   const GW = window.LP_GATEWAY, $ = id => document.getElementById(id);
-  const esc = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-  let liveRunId = null, replayTimer = null;
+  const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let liveRunId = null, replayTimer = null, runStart = null, finished = false, replaying = true;
 
-  // ---- turn log lines into the three lanes ----
+  // Friendly steps, matched against the log's "## " headings. secs = rough
+  // time from the click to the end of that step, for the "minutes left" hint.
+  const STEPS = [
+    { re: /^Asking GitHub/, text: "Start a cloud runner", secs: 25 },
+    { re: /^(Runner started|Building)/, text: "Build LimitPlane and the eBPF agent", secs: 70 },
+    { re: /^Creating two VMs/, text: "Create two Azure VMs", secs: 190 },
+    { re: /^[01]\./, text: "Install the shop and LimitPlane", secs: 215 },
+    { re: /^[23]\./, text: "Attacker floods the shop", secs: 240 },
+    { re: /^[45]\./, text: "Kernel drops the attacker", secs: 260 },
+    { re: /^6\./, text: "Ban expires", secs: 380 },
+    { re: /^(7|8)/, text: "Packet flood test", secs: 400 },
+    { re: /^(done|Deleting)/, text: "Delete both VMs", secs: 460 },
+  ];
+  const toSec = t => { const [h, m, s] = t.split(":").map(Number); return h * 3600 + m * 60 + s; };
+
+  // ---- numbers that count up instead of jumping ----
+  const shown = {};
+  function countTo(id, value, fmt = v => Math.round(v).toLocaleString()) {
+    const el = $(id), from = shown[id] ?? 0;
+    shown[id] = value;
+    if (calm || from === value) { el.textContent = fmt(value); return; }
+    const t0 = performance.now(), dur = 700;
+    const step = now => {
+      const k = Math.min(1, Math.max(0, (now - t0) / dur)), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = fmt(from + (value - from) * e);
+      if (k < 1 && shown[id] === value) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    // A background tab pauses animation frames; land on the real value anyway.
+    setTimeout(() => { if (shown[id] === value) el.textContent = fmt(value); }, dur + 80);
+  }
+
+  // ---- the packet-flow animation ----
+  // phase drives what spawns: calm (visitor only), attack (attacker packets
+  // reach LimitPlane, then bounce back amber), banned (attacker packets burst
+  // at the network card), flood (a dense burst, most of it dropped).
+  let phase = "idle";
+  const NS = "http://www.w3.org/2000/svg", layer = $("packets");
+  const ATK = [[180, 62], [350, 100], [480, 125], [800, 125]];
+  const VIS = [[180, 188], [350, 150], [480, 125], [800, 125]];
+  const packets = [];
+  function lerpPath(pts, t) {
+    const segs = pts.length - 1, f = Math.min(t, 0.9999) * segs, i = Math.floor(f), k = f - i;
+    return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k];
+  }
+  function spawn(kind) {
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("r", kind === "flood" ? 3 : 5);
+    layer.appendChild(c);
+    const p = { c, kind, t: 0, speed: kind === "flood" ? 0.9 : 0.42, state: "go", age: 0 };
+    p.path = kind === "visitor" ? VIS : ATK;
+    p.color = "var(--ok)";
+    if (kind === "attack") { p.until = 2 / 3; p.color = "var(--ok)"; p.bounce = Math.random() < 0.8; if (p.bounce) p.color = "var(--warn)"; }
+    if (kind === "banned") { p.until = 1 / 3; p.color = "var(--bad)"; p.drop = true; }
+    if (kind === "flood") { p.until = 1 / 3; p.drop = Math.random() < 0.8; p.color = p.drop ? "var(--bad)" : "var(--warn)"; }
+    c.style.fill = p.color;
+    packets.push(p);
+  }
+  const RATES = { idle: { visitor: 1100 }, calm: { visitor: 900 }, attack: { visitor: 900, attack: 110 },
+    banned: { visitor: 900, banned: 150 }, flood: { visitor: 900, flood: 22 } };
+  const lastSpawn = {};
+  let lastT = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now;
+    const rates = RATES[phase] || RATES.idle;
+    for (const kind in rates) {
+      if (now - (lastSpawn[kind] || 0) > rates[kind]) { lastSpawn[kind] = now; spawn(kind); }
+    }
+    for (let i = packets.length - 1; i >= 0; i--) {
+      const p = packets[i];
+      if (p.state === "go") {
+        p.t += dt * p.speed;
+        if (p.until && p.t >= p.until) {
+          p.t = p.until;
+          p.state = p.drop ? "burst" : p.bounce ? "back" : "go";
+          if (!p.drop && !p.bounce) p.until = null;
+        }
+        if (p.t >= 1) p.state = "gone";
+      } else if (p.state === "back") {
+        p.t -= dt * p.speed * 1.3;
+        if (p.t <= 0) p.state = "gone";
+      } else if (p.state === "burst") {
+        p.age += dt;
+        p.c.setAttribute("r", 5 + p.age * 40);
+        p.c.style.opacity = Math.max(0, 1 - p.age * 3.2);
+        if (p.age > 0.32) p.state = "gone";
+      }
+      if (p.state === "gone") { p.c.remove(); packets.splice(i, 1); continue; }
+      if (p.state !== "burst") {
+        const [x, y] = lerpPath(p.path, p.t);
+        p.c.setAttribute("cx", x.toFixed(1)); p.c.setAttribute("cy", y.toFixed(1));
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  function setPhase(next) {
+    if (next === phase) return;
+    phase = next;
+    const label = { idle: "waiting", calm: "normal traffic", attack: "attack: LimitPlane answers 429", banned: "banned: kernel drops it", flood: "packet flood: kernel drops it" }[next];
+    $("phase").textContent = label; $("phase").className = "phase " + next;
+    $("shield").classList.toggle("hot", next === "banned" || next === "flood");
+    $("droplbl").classList.toggle("on", next === "banned" || next === "flood");
+  }
+  if (!calm) requestAnimationFrame(frame);
+
   function render(lines) {
-    const stages = lines.filter(l => l.startsWith("## ")).map(l => l.slice(3));
-    progress(stages);
-    $("stages").innerHTML = stages.map((s, i) =>
-      `<span class="stage ${i === stages.length - 1 ? "now" : "seen"}">${esc(s)}</span>`).join("");
+    // ---- timeline ----
+    let idx = -1;
+    for (const l of lines) if (l.startsWith("## ")) STEPS.forEach((s, i) => { if (s.re.test(l.slice(3))) idx = Math.max(idx, i); });
+    const ended = lines.some(l => /^## done/.test(l));
+    const doneAll = finished || (replaying && ended);
+    $("steps").innerHTML = STEPS.map((s, i) => `<li class="${doneAll || i < idx ? "done" : i === idx ? "now" : ""}"><i></i>${s.text}</li>`).join("");
+    $("pbar").style.transform = `scaleX(${doneAll ? 1 : Math.max(0, idx + 1) / STEPS.length})`;
+    if (!replaying && !doneAll && runStart && idx >= 0) {
+      const el = Math.round((Date.now() - runStart) / 1000), left = Math.max(0, STEPS.at(-1).secs - el);
+      $("eta").textContent = `${Math.floor(el / 60)}:${String(el % 60).padStart(2, "0")} elapsed · about ${Math.max(1, Math.round(left / 60))} min left`;
+    } else $("eta").textContent = doneAll ? (replaying ? "recorded run, played back" : "finished, VMs deleted") : replaying ? "playing back a recorded run" : "";
 
-    let codes = [], stats = null, ban = null, visits = [], forged = null;
-    let atk = "", ping = "", flood = "", after = "", kernel = "", mode = "", hdr = "", bannedWho = "", siteIP = "", atkIP = "";
+    // ---- facts from the log ----
+    let codes = [], stats = null, ban = null, visits = [], forged = null, atkStart = null, banAt = null;
+    let atk = "", ping = "", floodSent = "", after = "", kernel = "", mode = "", hdr = "", bannedWho = "", siteIP = "", atkIP = "";
     for (const l of lines) {
-      if (/^(\d{3} )+\d{3}\s*$/.test(l.trim())) codes = l.trim().split(/\s+/);
       let m;
+      if (/^(\d{3} )+\d{3}\s*$/.test(l.trim())) codes = l.trim().split(/\s+/);
       if ((m = l.match(/passed=(\d+) dropped_banned=(\d+) dropped_rate=(\d+) banned_ips=(\d+)/))) stats = m.slice(1).map(Number);
-      if ((m = l.match(/kernel (ban|unban) ip=(\S+)/))) ban = { on: m[1] === "ban", ip: m[2] };
+      if ((m = l.match(/(\d\d:\d\d:\d\d) INFO kernel (ban|unban) ip=(\S+)/))) { ban = { on: m[2] === "ban", ip: m[3] }; if (m[2] === "ban" && banAt == null) banAt = toSec(m[1]); }
+      if ((m = l.match(/^\[(\d\d:\d\d:\d\d)\] attacker\$ .*for i in/)) && atkStart == null) atkStart = toSec(m[1]);
       if ((m = l.match(/^(runner|laptop) HTTP: (\d{3})/))) visits.push(m[2]);
       if ((m = l.match(/forging X-Forwarded-For: (\S+)/))) forged = m[1];
       if ((m = l.match(/attacker HTTP after expiry: (\d{3})/))) after = m[1];
-      else if ((m = l.match(/attacker HTTP: (\d{3})/))) { if (!atk) atk = m[1]; }
+      else if ((m = l.match(/attacker HTTP: (\d{3})/)) && !atk) atk = m[1];
       if ((m = l.match(/(\d+)% packet loss/))) ping = m[1] + "% loss";
-      if ((m = l.match(/sent (\d+) UDP packets in ([\d.]+)s/))) flood = `${Number(m[1]).toLocaleString()} sent in ${m[2]}s`;
+      if ((m = l.match(/sent (\d+) UDP packets in ([\d.]+)s/))) floodSent = `${Number(m[1]).toLocaleString()} sent in ${m[2]}s`;
       if ((m = l.match(/^Linux (\S+)/))) kernel = m[1];
       if ((m = l.match(/mode=(\w+)/))) mode = m[1];
-      if ((m = l.match(/X-Ratelimit-Limit: (\d+)/i))) hdr = "limit " + m[1];
+      if ((m = l.match(/X-Ratelimit-Limit: (\d+)/i))) hdr = m[1] + " requests, then 1/s";
       if ((m = l.match(/"tenantId": "([^"]+)"/))) bannedWho = m[1];
       if ((m = l.match(/site=(\S+) attacker=(\S+)/))) { siteIP = m[1]; atkIP = m[2]; }
     }
+    if (stats && stats[3] === 0 && ban && ban.on) ban = { on: false, ip: ban.ip };
 
-    $("codes").innerHTML = codes.map(c => `<span class="code c${c[0]}">${c}</span>`).join("");
-    $("forged").textContent = forged ? "visitor's address" : "none yet";
-    $("atkBanned").textContent = atk ? (atk === "000" ? "000, no answer at all" : atk) : "pending";
-    $("ping").textContent = ping || "pending";
-    if (stats) {
-      const [pass, banD, rate, n] = stats, max = Math.max(pass, banD, rate, 1);
-      $("nPass").textContent = pass.toLocaleString(); $("nBan").textContent = banD.toLocaleString(); $("nRate").textContent = rate.toLocaleString();
-      $("bPass").style.transform = `scaleX(${pass / max})`; $("bBan").style.transform = `scaleX(${banD / max})`; $("bRate").style.transform = `scaleX(${rate / max})`;
-      if (rate) flood = (flood ? flood + ", " : "") + rate.toLocaleString() + " dropped";
-      if (n === 0 && ban && ban.on) ban = { on: false, ip: ban.ip };
-    }
-    $("flood").textContent = flood || "pending";
-    $("after").textContent = after || "pending";
+    const codesHTML = codes.map(c => `<span class="c c${c[0]}">${c}</span>`).join("");
+    if ($("codes").dataset.v !== codesHTML) { $("codes").innerHTML = codesHTML; $("codes").dataset.v = codesHTML; }
     $("atkWho").textContent = atkIP ? "VM " + atkIP : "second VM";
+    $("dAtk").textContent = atkIP || "second VM";
     $("kWho").textContent = [siteIP ? "site VM " + siteIP : "site VM", kernel && "kernel " + kernel, mode && mode + " mode"].filter(Boolean).join(" · ");
+    $("atkBanned").textContent = atk ? (atk === "000" ? "no answer at all" : "HTTP " + atk) : "pending";
+    $("ping").textContent = ping || "pending";
+    $("after").textContent = after ? "HTTP " + after : "pending";
+    let rate = 0, banD = 0;
+    if (stats) {
+      const [pass, bd, rt] = stats, max = Math.max(pass, bd, rt, 1);
+      banD = bd; rate = rt;
+      countTo("nPass", pass); countTo("nBan", bd); countTo("nRate", rt);
+      $("bPass").style.transform = `scaleX(${pass / max})`; $("bBan").style.transform = `scaleX(${bd / max})`; $("bRate").style.transform = `scaleX(${rt / max})`;
+    }
+    $("flood").textContent = floodSent ? floodSent + (rate ? `, ${rate.toLocaleString()} dropped` : "") : "pending";
     $("banner").className = "banner" + (ban && ban.on ? " on" : "");
-    $("banner").textContent = ban ? (ban.on ? `BANNED in kernel: ${ban.ip}` : `ban on ${ban.ip} expired`) : "ban list empty";
-    $("visits").innerHTML = visits.map(v => `<span class="ok ${v === "200" ? "" : "bad"}">${v}</span>`).join("");
-    $("banned").textContent = bannedWho ? bannedWho.replace("anon:", "") + (forged && bannedWho.endsWith(forged) ? " (forged!)" : " (the attacker)") : "nobody yet";
+    $("banner").textContent = ban ? (ban.on ? `BANNED IN KERNEL  ${ban.ip}` : `ban on ${ban.ip} expired`) : "ban list empty";
+    const visHTML = visits.map(v => `<span class="v ${v === "200" ? "" : "bad"}">${v}</span>`).join("");
+    if ($("visits").dataset.v !== visHTML) { $("visits").innerHTML = visHTML; $("visits").dataset.v = visHTML; }
+    $("banned").textContent = bannedWho ? bannedWho.replace("anon:", "") + (forged && bannedWho.endsWith(forged) ? " (the faked address!)" : ", the attacker") : "nobody yet";
     $("hdr").textContent = hdr || "pending";
+
+    // ---- stat strip ----
+    if (atkStart != null && banAt != null) countTo("sBan", banAt - atkStart, v => Math.round(v) + " s"); else $("sBan").textContent = "–";
+    if (banD) countTo("sDrop", banD); else $("sDrop").textContent = "–";
+    if (rate) countTo("sFlood", rate); else $("sFlood").textContent = "–";
+    const ok = visits.filter(v => v === "200").length;
+    $("sVisit").textContent = visits.length ? `${ok} / ${visits.length} served` : "–";
+
+    // ---- which animation phase ----
+    let next = idx >= 3 ? "calm" : "idle";
+    if (idx === 4) next = "attack";
+    if (ban && ban.on && idx >= 4 && idx <= 6) next = "banned";
+    if (idx === 7 && floodSent && !lines.some(l => /^## 8/.test(l))) next = "flood";
+    if (doneAll || idx === 8) next = "idle";
+    setPhase(next);
 
     const log = $("log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
     log.textContent = lines.join("\n");
     if (atBottom) log.scrollTop = log.scrollHeight;
   }
 
-  // Friendly steps, matched against the log's "## " headings. secs = rough
-  // time from the click to the end of that step, for the "minutes left" hint.
-  const STEPS = [
-    { re: /^Asking GitHub/, text: "Starting a cloud runner on GitHub Actions", secs: 25 },
-    { re: /^(Runner started|Building)/, text: "Building LimitPlane and the eBPF agent", secs: 70 },
-    { re: /^Creating two VMs/, text: "Creating two Azure VMs (the slow part)", secs: 190 },
-    { re: /^[01]\./, text: "Installing the shop, LimitPlane and the kernel program", secs: 215 },
-    { re: /^[23]\./, text: "The attacker is flooding the shop", secs: 240 },
-    { re: /^[45]\./, text: "Banned: the kernel is dropping the attacker", secs: 260 },
-    { re: /^6\./, text: "Waiting for the ban to expire", secs: 360 },
-    { re: /^(7|8)/, text: "Packet flood: the kernel's per-IP limit", secs: 380 },
-    { re: /^(done|Deleting)/, text: "Deleting both VMs", secs: 440 },
-  ];
-  let runStart = null, finished = false;
-  function progress(stages) {
-    let idx = -1;
-    for (const st of stages) STEPS.forEach((s, i) => { if (s.re.test(st)) idx = Math.max(idx, i); });
-    if (idx < 0) return;
-    const total = STEPS.length, done = finished ? total : idx + 1;
-    $("pbar").style.transform = `scaleX(${done / total})`;
-    $("step").textContent = finished ? "Finished. Both VMs were deleted." : `Step ${idx + 1} of ${total}: ${STEPS[idx].text}`;
-    if (finished || !runStart) { $("eta").textContent = ""; return; }
-    const el = Math.round((Date.now() - runStart) / 1000), left = Math.max(0, STEPS[total - 1].secs - el);
-    $("eta").textContent = `${Math.floor(el / 60)}:${String(el % 60).padStart(2, "0")} elapsed · about ${Math.max(1, Math.round(left / 60))} min left`;
-  }
-
   function setStatus(kind, text) {
-    $("status").className = "pill " + kind;
-    $("status").textContent = { replay: "Replay", dispatched: "Starting", running: "Live", done: "Finished", failed: "Failed" }[kind] || kind;
+    $("dot").className = "dot " + ({ dispatched: "live", running: "live", done: "done", failed: "failed", replay: "live" }[kind] || "");
     $("statusText").textContent = text;
   }
 
-  // ---- replay of the recorded Azure run, played back at speed ----
+  // ---- the recorded run, played back at a watchable pace ----
+  // Lines stream quickly, but each step heading holds the screen for a moment
+  // so the diagram has time to show it.
+  let all = null;
   async function replay() {
-    let text;
-    try { text = await (await fetch("live-sample.log")).text(); } catch { return; }
-    const all = text.split("\n");
+    if (!all) {
+      try { all = (await (await fetch("live-sample.log")).text()).split("\n"); } catch { return; }
+    }
+    replaying = true; finished = false;
+    $("again").hidden = true;
+    setStatus("replay", "Replaying a recorded run from 22 Oct 2026");
+    for (const id in shown) delete shown[id];
     let i = 0;
-    clearInterval(replayTimer);
-    replayTimer = setInterval(() => {
-      i = Math.min(all.length, i + 4);
+    clearTimeout(replayTimer);
+    const tick = () => {
+      if (!replaying) return;
+      let n = 0;
+      while (i < all.length && n < 6) { const l = all[i++]; n++; if (l.startsWith("## ")) break; }
       render(all.slice(0, i));
-      if (i >= all.length) { clearInterval(replayTimer); $("step").textContent = "This is a recording of a real run. Press Run to start a new one on Azure."; $("pbar").style.transform = "scaleX(1)"; }
-    }, 60);
+      if (i >= all.length) {
+        setStatus("done", "Recorded run from 22 Oct 2026, played back");
+        $("again").hidden = false;
+        return;
+      }
+      const held = all[i - 1] && all[i - 1].startsWith("## ");
+      replayTimer = setTimeout(tick, held ? 1600 : 90);
+    };
+    tick();
   }
+  $("again").addEventListener("click", replay);
 
   // ---- the live run from the gateway ----
+  let pollTimer;
+  const schedule = ms => { clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); };
   async function poll() {
     let data;
     try { data = await (await fetch(GW + "/v1/live-test")).json(); } catch { return schedule(5000); }
@@ -281,21 +505,19 @@
     $("left").textContent = data.configured && typeof data.runsLeftToday === "number" ? `${data.runsLeftToday} of 5 runs left today` : "";
     $("run").disabled = !data.configured || busy || data.runsLeftToday === 0;
     if (run && (busy || run.id === liveRunId)) {
-      clearInterval(replayTimer);
+      clearTimeout(replayTimer);
+      replaying = false;
+      $("again").hidden = !(run.status === "done" || run.status === "failed");
       liveRunId = run.id;
       runStart = new Date(run.startedAt).getTime();
       finished = run.status === "done";
       render(run.lines);
-      const mins = Math.round((Date.now() - new Date(run.startedAt)) / 60000);
-      setStatus(run.status, { dispatched: "GitHub Actions is picking up the run…", running: `Running for ${mins} min. VMs are deleted at the end.`,
-        done: "Done. Both VMs were deleted.", failed: "The run failed. Its teardown step still deletes the VMs." }[run.status]);
+      setStatus(run.status, { dispatched: "Live run starting on GitHub Actions", running: "Live run in progress",
+        done: "Live run finished, both VMs deleted", failed: "The run failed. Its cleanup step still deletes the VMs." }[run.status]);
     }
-    schedule(run && (run.status === "running" || run.status === "dispatched") ? 1500 : 6000);
+    schedule(busy ? 1500 : 6000);
   }
-  let pollTimer;
-  function schedule(ms) { clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
 
-  // ---- start ----
   $("run").addEventListener("click", async () => {
     $("run").disabled = true;
     setStatus("dispatched", "Starting…");
@@ -303,13 +525,15 @@
       const r = await fetch(GW + "/v1/live-test/start", { method: "POST" });
       const d = await r.json();
       if (!r.ok) {
-        setStatus("failed", d.message || (r.status === 429 ? "Slow down: the button is rate limited. Try again in a minute." : d.error));
+        setStatus("failed", d.message || (r.status === 429 ? "The button is rate limited. Try again in a minute." : d.error));
         schedule(1500);
         return;
       }
-      liveRunId = d.id; runStart = Date.now(); finished = false;
-      clearInterval(replayTimer); render(d.lines);
-      setStatus("dispatched", "GitHub Actions is picking up the run…");
+      clearTimeout(replayTimer);
+      replaying = false; finished = false; liveRunId = d.id; runStart = Date.now();
+      for (const id in shown) delete shown[id];
+      render(d.lines);
+      setStatus("dispatched", "Live run starting on GitHub Actions");
       schedule(1500);
     } catch { setStatus("failed", "Could not reach the gateway. It may be waking up; try again in 30 seconds."); $("run").disabled = false; }
   });

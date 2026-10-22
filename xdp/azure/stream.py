@@ -20,7 +20,13 @@ def post(lines, status=""):
 sent = 0
 while True:
     done = os.path.exists(log + ".done")
-    lines = open(log).read().splitlines() if os.path.exists(log) else []
+    text = open(log).read() if os.path.exists(log) else ""
+    if not done:
+        # Only whole lines. A line still being written (the attacker's status
+        # codes arrive one at a time) would otherwise be sent half done and
+        # never again, because only the line count is tracked.
+        text = text[: text.rfind("\n") + 1]
+    lines = text.splitlines()
     if len(lines) > sent:
         post(lines[sent:])
         sent = len(lines)
