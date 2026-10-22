@@ -51,6 +51,10 @@ LIMITPLANE_EMAIL=... LIMITPLANE_PASSWORD=... \
   sudo -E ./limitplane-xdp -iface eth0 -gateway http://localhost:3000 \
        -rate 2000 -burst 4000 -never 10.0.0.0/8
 
+# or, in front of a real site: the reverse proxy, read with its adminKey
+LIMITPLANE_ADMIN_KEY=... sudo -E ./limitplane-xdp -iface eth0 \
+       -gateway http://127.0.0.1:80     # proxy started with: limitplane --config lp.json
+
 sudo ./limitplane-xdp ban 203.0.113.7 -for 10m   # operator ban, by hand
 sudo ./limitplane-xdp unban 203.0.113.7
 sudo ./limitplane-xdp stats                      # passed / dropped_banned / dropped_rate
@@ -77,6 +81,12 @@ the client a cooldown that the agent copies into the kernel.
 
 Last run: **all 17 checks passed** on Linux 6.8.0 (aarch64, Ubuntu 24.04 in a
 Colima VM), with the program attached in **native** mode on the veth.
+
+**On the public internet:** [`azure/`](azure/) runs the reverse proxy in front
+of a demo shop on an Azure VM (kernel 7.0, `hv_netvsc`, generic mode) while a
+second VM attacks it. The attacker forged `X-Forwarded-For`, got itself (not
+the forged address) banned, was dropped at the NIC 4 s after it started, and a
+20,000-packet UDP flood was cut to its burst. The full session log is there.
 
 ## Design notes
 
@@ -109,16 +119,18 @@ Colima VM), with the program attached in **native** mode on the veth.
 
 - **L3 only.** It knows source addresses and packet counts — nothing about
   TCP state, HTTP, paths or API keys. It is not a WAF.
-- **Trust in X-Forwarded-For.** The gateway takes an anonymous client's
-  address from `X-Forwarded-For` when present, and that header can be forged.
-  Run the agent only where the gateway sees real peer addresses (no proxy in
-  front, or a proxy that overwrites the header), and use `-never` for your own
-  infrastructure. `-max-bans` caps how many gateway bans reach the kernel.
+- **Trust in X-Forwarded-For.** The demo gateway takes an anonymous client's
+  address from `X-Forwarded-For`, which a client can forge. The reverse proxy
+  ignores that header unless started with `--trust-proxy`, so on an
+  internet-facing host a forged header cannot get somebody else banned (the
+  Azure run below checks exactly this). Behind your own load balancer, pass
+  `--trust-proxy` and put the balancer in `-never`. `-max-bans` caps how many
+  gateway bans reach the kernel.
 - **Behind a load balancer it does little:** the NIC sees the balancer's
   address, not the client's.
 - **The bucket counts packets, not requests or bytes.** Set the rate well above
   what a legitimate client sends; it is a flood guard, not the rate limit.
 - **Linux only**, root or `CAP_BPF` + `CAP_NET_ADMIN`. IPv4 and IPv6 over
   Ethernet; VLAN-tagged frames and everything else are passed untouched.
-- New this week, tested in namespaces on one kernel — not yet run against
-  production traffic.
+- Tested in namespaces (6.8) and on one Azure VM (7.0, generic mode). Not yet
+  run against production traffic.

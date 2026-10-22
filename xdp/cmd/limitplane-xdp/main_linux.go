@@ -4,6 +4,8 @@
 // interface and keeps its ban list in step with the gateway's autopilot.
 //
 //	limitplane-xdp -iface eth0                     # attach + sync, until Ctrl-C
+//	LIMITPLANE_ADMIN_KEY=k limitplane-xdp -iface eth0 -gateway http://127.0.0.1:3000
+//	                                               # sync from the reverse proxy
 //	limitplane-xdp ban   10.0.0.9 -for 5m          # operator ban, by hand
 //	limitplane-xdp unban 10.0.0.9
 //	limitplane-xdp stats                           # passed / dropped counters
@@ -51,7 +53,7 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("limitplane-xdp", flag.ExitOnError)
 	iface := fs.String("iface", "", "network interface to attach to (required)")
-	gateway := fs.String("gateway", "http://localhost:3000", "LimitPlane gateway to read autopilot cooldowns from; empty disables sync")
+	gateway := fs.String("gateway", "http://localhost:3000", "LimitPlane gateway or proxy to read autopilot cooldowns from; empty disables sync")
 	rate := fs.Uint64("rate", 2000, "per-IP packet budget, packets/second (0 disables the flood check)")
 	burst := fs.Uint64("burst", 4000, "per-IP burst, packets")
 	every := fs.Duration("sync", time.Second, "how often to read the gateway's cooldowns")
@@ -100,6 +102,7 @@ func run(args []string) error {
 
 	g := &gatewayClient{
 		base:     *gateway,
+		adminKey: os.Getenv("LIMITPLANE_ADMIN_KEY"), // set when -gateway is the reverse proxy
 		token:    os.Getenv("LIMITPLANE_TOKEN"),
 		email:    os.Getenv("LIMITPLANE_EMAIL"),
 		password: os.Getenv("LIMITPLANE_PASSWORD"),

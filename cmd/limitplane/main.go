@@ -50,6 +50,7 @@ type fileConfig struct {
 	Upstream        string `json:"upstream"`
 	AdminKey        string `json:"adminKey"`
 	AlertWebhookURL string `json:"alertWebhookUrl"`
+	TrustProxy      bool   `json:"trustProxy"`
 	Policy          struct {
 		Tiers   map[string]*policy.Tier  `json:"tiers"`
 		Routes  map[string]policy.Route  `json:"routes"`
@@ -69,12 +70,13 @@ func main() {
 		rpm          = fs.Int("rpm", 60, "requests/minute per visitor, default policy only")
 		heavy        = fs.String("heavy", "", "comma-separated routes priced as heavy AI calls (5 tokens)")
 		alertWebhook = fs.String("alert-webhook", "", "POST autopilot alerts here (Slack/Discord compatible)")
+		trustProxy   = fs.Bool("trust-proxy", false, "trust X-Forwarded-For; set only when your own load balancer sits in front")
 	)
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
 
-	if err := run(logger, *configPath, *upstreamFlag, *portFlag, *rpm, *heavy, *alertWebhook); err != nil {
+	if err := run(logger, *configPath, *upstreamFlag, *portFlag, *rpm, *heavy, *alertWebhook, *trustProxy); err != nil {
 		logger.Error("limitplane stopped", "err", err)
 		os.Exit(1)
 	}
@@ -93,12 +95,13 @@ Flags:
   --heavy <paths>        comma-separated routes priced as heavy AI calls
   --config <path>        full policy file (tiers, tenants, API keys)
   --alert-webhook <url>  POST autopilot alerts (quota, abuse cooldowns) here
+  --trust-proxy          trust X-Forwarded-For (only behind your own load balancer)
 
 Set GROQ_API_KEY for AI-written alert notes. Docs: https://limitplane.vercel.app
 `)
 }
 
-func run(logger *slog.Logger, configPath, upstreamFlag string, portFlag, rpm int, heavy, alertWebhook string) error {
+func run(logger *slog.Logger, configPath, upstreamFlag string, portFlag, rpm int, heavy, alertWebhook string, trustProxy bool) error {
 	cfg := fileConfig{}
 	fromFile := false
 
@@ -161,6 +164,7 @@ func run(logger *slog.Logger, configPath, upstreamFlag string, portFlag, rpm int
 	if alertWebhook == "" {
 		alertWebhook = cfg.AlertWebhookURL
 	}
+	trustProxy = trustProxy || cfg.TrustProxy
 
 	pol, err := policy.New(cfg.Policy.Tiers, cfg.Policy.Routes, cfg.Policy.Tenants)
 	if err != nil {
@@ -230,6 +234,9 @@ func run(logger *slog.Logger, configPath, upstreamFlag string, portFlag, rpm int
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		switch {
+		case strings.HasPrefix(r.URL.Path, "/_limitplane/autopilot"):
+			// The ban list the XDP agent copies into the kernel.
+			_ = enc.Encode(auto.State())
 		case strings.HasPrefix(r.URL.Path, "/_limitplane/automations"):
 			_ = enc.Encode(auto.Recent(50))
 		case strings.HasPrefix(r.URL.Path, "/_limitplane/stats"):
@@ -239,10 +246,13 @@ func run(logger *slog.Logger, configPath, upstreamFlag string, portFlag, rpm int
 		}
 	})
 
-	mux.Handle("/", gw.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/", forwardedFor(trustProxy, gw.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
 		proxy.ServeHTTP(w, r)
-	})))
+	}))))
+	if !trustProxy {
+		logger.Info("identifying visitors by socket address; pass --trust-proxy if a load balancer of yours sits in front")
+	}
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
@@ -273,4 +283,24 @@ func run(logger *slog.Logger, configPath, upstreamFlag string, portFlag, rpm int
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// forwardedFor decides whose word the visitor's address is taken on.
+//
+// The gateway reads the first X-Forwarded-For entry, which is right behind a
+// load balancer and wrong on the open internet: there the header comes from the
+// client, and a client can write any address into it. Forged, it lets one
+// caller rotate through fresh anonymous budgets, or get somebody else's address
+// put in cooldown, which the XDP agent then drops at the NIC. So unless the
+// operator says a proxy of theirs is in front, the header is removed and the
+// socket address is the identity. httputil then sets a truthful one for the
+// upstream.
+func forwardedFor(trust bool, next http.Handler) http.Handler {
+	if trust {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Header.Del("X-Forwarded-For")
+		next.ServeHTTP(w, r)
+	})
 }

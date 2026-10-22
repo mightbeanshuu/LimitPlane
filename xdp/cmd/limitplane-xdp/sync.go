@@ -24,11 +24,18 @@ type activeBan struct {
 	RemainingMs int64  `json:"remainingMs"`
 }
 
-// gatewayClient reads the autopilot state. The endpoint needs a JWT; it is
-// either given (LIMITPLANE_TOKEN) or obtained by logging in, and a 401 from an
-// expired token triggers one fresh login.
+// gatewayClient reads the autopilot state from either of the two binaries.
+//
+// The demo gateway (cmd/gateway) serves it at /v1/admin/autopilot behind a JWT,
+// which is either given (LIMITPLANE_TOKEN) or obtained by logging in; a 401
+// from an expired token triggers one fresh login.
+//
+// The reverse proxy (cmd/limitplane), which is what a real site runs, has no
+// users to log in as. It serves the same state at /_limitplane/autopilot
+// behind its shared admin key. Setting adminKey picks that path.
 type gatewayClient struct {
 	base            string
+	adminKey        string
 	token           string
 	email, password string
 	http            *http.Client
@@ -37,6 +44,9 @@ type gatewayClient struct {
 var errUnauthorized = errors.New("gateway answered 401: set LIMITPLANE_TOKEN, or LIMITPLANE_EMAIL and LIMITPLANE_PASSWORD")
 
 func (g *gatewayClient) bans(ctx context.Context) ([]activeBan, error) {
+	if g.adminKey != "" {
+		return g.fetch(ctx)
+	}
 	if g.token == "" && g.email != "" {
 		if err := g.login(ctx); err != nil {
 			return nil, err
@@ -53,11 +63,19 @@ func (g *gatewayClient) bans(ctx context.Context) ([]activeBan, error) {
 }
 
 func (g *gatewayClient) fetch(ctx context.Context) ([]activeBan, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base+"/v1/admin/autopilot", nil)
+	path := "/v1/admin/autopilot"
+	if g.adminKey != "" {
+		path = "/_limitplane/autopilot"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base+path, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+g.token)
+	if g.adminKey != "" {
+		req.Header.Set("X-LimitPlane-Admin", g.adminKey)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+g.token)
+	}
 	res, err := g.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -65,6 +83,11 @@ func (g *gatewayClient) fetch(ctx context.Context) ([]activeBan, error) {
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusUnauthorized {
 		return nil, errUnauthorized
+	}
+	if res.StatusCode == http.StatusNotFound && g.adminKey != "" {
+		// The proxy answers a wrong key with a 404 so it does not advertise the
+		// endpoint. Say what that most likely means instead of "404".
+		return nil, errors.New("proxy answered 404 on /_limitplane/autopilot: check LIMITPLANE_ADMIN_KEY matches the proxy's adminKey")
 	}
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("gateway answered %s", res.Status)

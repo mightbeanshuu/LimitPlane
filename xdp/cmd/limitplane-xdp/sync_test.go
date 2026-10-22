@@ -113,6 +113,33 @@ func TestGatewayClientLogsInAgainAfter401(t *testing.T) {
 	}
 }
 
+func TestGatewayClientReadsTheProxyWithItsAdminKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_limitplane/autopilot" || r.Header.Get("X-LimitPlane-Admin") != "k" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"activeBans": []activeBan{{TenantID: "anon:198.51.100.4", RemainingMs: 2000}},
+		})
+	}))
+	defer srv.Close()
+
+	g := &gatewayClient{base: srv.URL, adminKey: "k", http: srv.Client()}
+	bans, err := g.bans(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bans) != 1 || bans[0].TenantID != "anon:198.51.100.4" {
+		t.Fatalf("bans = %v", bans)
+	}
+
+	g.adminKey = "wrong"
+	if _, err := g.bans(context.Background()); err == nil {
+		t.Fatal("a wrong admin key must be an error, not an empty ban list")
+	}
+}
+
 func TestParsePrefixesAcceptsBareAddresses(t *testing.T) {
 	p, err := parsePrefixes("192.0.2.5,2001:db8::/32")
 	if err != nil {
