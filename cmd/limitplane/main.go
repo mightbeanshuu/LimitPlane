@@ -51,6 +51,7 @@ type fileConfig struct {
 	AdminKey        string `json:"adminKey"`
 	AlertWebhookURL string `json:"alertWebhookUrl"`
 	TrustProxy      bool   `json:"trustProxy"`
+	CooldownSeconds int    `json:"cooldownSeconds"` // autopilot ban length, default 300
 	Policy          struct {
 		Tiers   map[string]*policy.Tier  `json:"tiers"`
 		Routes  map[string]policy.Route  `json:"routes"`
@@ -179,6 +180,7 @@ func run(logger *slog.Logger, configPath, upstreamFlag string, portFlag, rpm int
 		Explainer:       ai.NewExplainer(os.Getenv("GROQ_API_KEY"), "", nil),
 		GetRecentEvents: func() []audit.Event { return auditLog.Recent(10) },
 		Now:             now,
+		CooldownMs:      int64(cfg.CooldownSeconds) * 1000, // 0 keeps the default
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LimitPlane Live XDP Test</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap" rel="stylesheet">
+<style>
+  /* Same tokens as the landing page. Layout: control bar, then three lanes (attacker | kernel | visitor), then the raw log. */
+  :root{
+    --bg:#0b1120; --panel:#111a2e; --panel2:#0d1526; --line:#1e293b;
+    --text:#e2e8f0; --dim:#94a3b8; --faint:#64748b;
+    --sky:#38bdf8; --teal:#2dd4bf; --rose:#f43f5e; --amber:#fbbf24;
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --display:'Bricolage Grotesque',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    color-scheme:dark;
+  }
+  @media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
+    --bg:#f2f5fa; --panel:#ffffff; --panel2:#f6f8fc; --line:#dbe3ee;
+    --text:#1c2940; --dim:#5d6b84; --faint:#8b98ae;
+    --sky:#0284c7; --teal:#0d9488; --rose:#e11d48; --amber:#b45309; color-scheme:light}}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+  a{color:var(--sky);text-decoration:none}
+  .wrap{max-width:1120px;margin:0 auto;padding:28px max(16px,env(safe-area-inset-left,0px)) 64px max(16px,env(safe-area-inset-right,0px))}
+  header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between;margin-bottom:20px}
+  h1{font:700 clamp(26px,4.5vw,40px)/1.1 var(--display);letter-spacing:-.01em}
+  .sub{color:var(--dim);max-width:62ch;margin-top:6px}
+  .back{font-size:14px}
+  .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:16px}
+  .pill{font:600 12px/1 var(--mono);text-transform:uppercase;letter-spacing:.08em;padding:6px 10px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+  .pill.running{color:var(--amber);border-color:var(--amber)}
+  .pill.done{color:var(--teal);border-color:var(--teal)}
+  .pill.failed{color:var(--rose);border-color:var(--rose)}
+  .pill.replay{color:var(--sky);border-color:var(--sky)}
+  .bar .spacer{flex:1}
+  .bar small{color:var(--faint)}
+  button,input{font:inherit}
+  .btn{background:var(--sky);color:#04121f;border:0;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer}
+  .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line);font-weight:600}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn:focus-visible,input:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
+  form.login{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  form.login input{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;min-width:0;width:190px}
+  .err{color:var(--rose);font-size:14px;width:100%}
+  .stages{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+  .stage{font-size:13px;padding:5px 10px;border-radius:7px;background:var(--panel2);border:1px solid var(--line);color:var(--faint)}
+  .stage.seen{color:var(--dim)}
+  .stage.now{color:var(--text);border-color:var(--sky);background:var(--panel)}
+  .lanes{display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:14px}
+  @media (max-width:860px){.lanes{grid-template-columns:1fr}}
+  .lane{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+  .lane h2{font:700 18px/1.2 var(--display);margin-bottom:2px}
+  .lane .who{font:12px/1.4 var(--mono);color:var(--faint);margin-bottom:12px;overflow-wrap:anywhere}
+  .lane.kernel{border-color:var(--sky)}
+  .codes{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:10px;min-height:22px}
+  .code{font:600 11px/1 var(--mono);padding:4px 5px;border-radius:4px;background:var(--panel2);color:var(--faint)}
+  .code.c2{background:rgba(45,212,191,.16);color:var(--teal)}
+  .code.c4{background:rgba(251,191,36,.16);color:var(--amber)}
+  .code.c0{background:rgba(244,63,94,.16);color:var(--rose)}
+  .legend{font-size:12px;color:var(--faint);display:flex;flex-wrap:wrap;gap:4px 12px;margin-bottom:10px}
+  .facts{display:grid;gap:6px;font-size:14px}
+  .facts div{display:flex;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:6px}
+  .facts span:last-child{font-family:var(--mono);text-align:right;overflow-wrap:anywhere}
+  .meter{margin-bottom:12px}
+  .meter .lbl{display:flex;justify-content:space-between;font-size:13px;color:var(--dim);margin-bottom:4px}
+  .meter .lbl b{font:700 20px/1 var(--mono);color:var(--text);font-variant-numeric:tabular-nums}
+  .track{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden}
+  .fill{height:100%;width:100%;border-radius:99px;transform-origin:left;transform:scaleX(0);transition:transform .4s}
+  .fill.pass{background:var(--teal)} .fill.ban{background:var(--rose)} .fill.rate{background:var(--amber)}
+  .banner{font:600 14px/1.4 var(--mono);padding:10px 12px;border-radius:8px;margin-top:10px;border:1px dashed var(--line);color:var(--faint)}
+  .banner.on{border-style:solid;border-color:var(--rose);color:var(--rose);background:rgba(244,63,94,.08)}
+  .visits{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:28px}
+  .ok{font:700 13px/1 var(--mono);padding:7px 9px;border-radius:7px;background:rgba(45,212,191,.16);color:var(--teal)}
+  .bad{background:rgba(244,63,94,.16);color:var(--rose)}
+  details.log{margin-top:16px;background:#0a0f1c;border:1px solid var(--line);border-radius:12px}
+  details.log summary{cursor:pointer;padding:10px 14px;color:#cbd5e1;font-size:14px}
+  pre#log{color:#cbd5e1;font:12px/1.5 var(--mono);padding:0 14px 14px;max-height:420px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+  .note{color:var(--faint);font-size:13px;margin-top:14px;max-width:80ch}
+  @media (prefers-reduced-motion:reduce){.fill{transition:none}}
+</style>
+</head>
+<body>
+<script>window.LP_GATEWAY = "https://limitplane.onrender.com";</script>
+<div class="wrap">
+  <header>
+    <div>
+      <a class="back" href="/">&larr; LimitPlane</a>
+      <h1>Live XDP test on Azure</h1>
+      <p class="sub">One click builds two Azure VMs: a shop behind LimitPlane with the eBPF fast path, and an attacker. The attacker floods it and forges another visitor's address, gets banned, and is dropped in the kernel. Then both VMs are deleted.</p>
+    </div>
+  </header>
+
+  <div class="bar">
+    <span id="status" class="pill replay">Replay</span>
+    <span id="statusText">Showing the recorded run from 22 Oct 2026.</span>
+    <span class="spacer"></span>
+    <form class="login" id="login" hidden>
+      <input id="email" type="email" placeholder="admin email" autocomplete="username" required>
+      <input id="pass" type="password" placeholder="password" autocomplete="current-password" required>
+      <button class="btn ghost" type="submit">Log in</button>
+      <span class="err" id="err"></span>
+    </form>
+    <button class="btn" id="run" hidden>Run live test</button>
+    <a id="actions" class="btn ghost" href="https://github.com/mightbeanshuu/LimitPlane/actions/workflows/xdp-live.yml" target="_blank" rel="noopener">GitHub Actions</a>
+  </div>
+
+  <div class="stages" id="stages"></div>
+
+  <div class="lanes">
+    <section class="lane">
+      <h2>Attacker</h2>
+      <p class="who" id="atkWho">second VM</p>
+      <div class="legend"><span>HTTP per request:</span><span style="color:var(--teal)">200 served</span><span style="color:var(--amber)">429 limited</span><span style="color:var(--rose)">000 no answer</span></div>
+      <div class="codes" id="codes"></div>
+      <div class="facts">
+        <div><span>Forged X-Forwarded-For</span><span id="forged">none yet</span></div>
+        <div><span>While banned</span><span id="atkBanned">pending</span></div>
+        <div><span>Ping while banned</span><span id="ping">pending</span></div>
+        <div><span>UDP flood</span><span id="flood">pending</span></div>
+        <div><span>After the cooldown</span><span id="after">pending</span></div>
+      </div>
+    </section>
+
+    <section class="lane kernel">
+      <h2>Kernel (XDP on eth0)</h2>
+      <p class="who" id="kWho">site VM</p>
+      <div class="meter"><div class="lbl"><span>passed</span><b id="nPass">0</b></div><div class="track"><div class="fill pass" id="bPass"></div></div></div>
+      <div class="meter"><div class="lbl"><span>dropped: banned IP</span><b id="nBan">0</b></div><div class="track"><div class="fill ban" id="bBan"></div></div></div>
+      <div class="meter"><div class="lbl"><span>dropped: packet flood</span><b id="nRate">0</b></div><div class="track"><div class="fill rate" id="bRate"></div></div></div>
+      <div class="banner" id="banner">ban list empty</div>
+    </section>
+
+    <section class="lane">
+      <h2>Normal visitor</h2>
+      <p class="who" id="visWho">its address is the one the attacker forges</p>
+      <div class="visits" id="visits"></div>
+      <div class="facts">
+        <div><span>Who got banned</span><span id="banned">nobody yet</span></div>
+        <div><span>Rate-limit headers</span><span id="hdr">pending</span></div>
+      </div>
+    </section>
+  </div>
+
+  <details class="log" id="logBox">
+    <summary>Full session log (every command and its output)</summary>
+    <pre id="log"></pre>
+  </details>
+  <p class="note">Starting a run needs an admin login and is limited to a few runs a day, because each one uses real cloud credit. Anyone can watch. The scripts are in <a href="https://github.com/mightbeanshuu/LimitPlane/tree/main/xdp/azure">xdp/azure</a>.</p>
+</div>
+
+<script>
+(() => {
+  const GW = window.LP_GATEWAY, $ = id => document.getElementById(id);
+  const esc = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  let token = null, liveRunId = null, replayTimer = null;
+  try { token = sessionStorage.getItem("lp_live_token"); } catch {}
+
+  // ---- turn log lines into the three lanes ----
+  function render(lines) {
+    const stages = lines.filter(l => l.startsWith("## ")).map(l => l.slice(3));
+    $("stages").innerHTML = stages.map((s, i) =>
+      `<span class="stage ${i === stages.length - 1 ? "now" : "seen"}">${esc(s)}</span>`).join("");
+
+    let codes = [], stats = null, ban = null, visits = [], forged = null;
+    let atk = "", ping = "", flood = "", after = "", kernel = "", mode = "", hdr = "", bannedWho = "", siteIP = "", atkIP = "";
+    for (const l of lines) {
+      if (/^(\d{3} )+\d{3}\s*$/.test(l.trim())) codes = l.trim().split(/\s+/);
+      let m;
+      if ((m = l.match(/passed=(\d+) dropped_banned=(\d+) dropped_rate=(\d+) banned_ips=(\d+)/))) stats = m.slice(1).map(Number);
+      if ((m = l.match(/kernel (ban|unban) ip=(\S+)/))) ban = { on: m[1] === "ban", ip: m[2] };
+      if ((m = l.match(/^(runner|laptop) HTTP: (\d{3})/))) visits.push(m[2]);
+      if ((m = l.match(/forging X-Forwarded-For: (\S+)/))) forged = m[1];
+      if ((m = l.match(/attacker HTTP after expiry: (\d{3})/))) after = m[1];
+      else if ((m = l.match(/attacker HTTP: (\d{3})/))) { if (!atk) atk = m[1]; }
+      if ((m = l.match(/(\d+)% packet loss/))) ping = m[1] + "% loss";
+      if ((m = l.match(/sent (\d+) UDP packets in ([\d.]+)s/))) flood = `${Number(m[1]).toLocaleString()} sent in ${m[2]}s`;
+      if ((m = l.match(/^Linux (\S+)/))) kernel = m[1];
+      if ((m = l.match(/mode=(\w+)/))) mode = m[1];
+      if ((m = l.match(/X-Ratelimit-Limit: (\d+)/i))) hdr = "limit " + m[1];
+      if ((m = l.match(/"tenantId": "([^"]+)"/))) bannedWho = m[1];
+      if ((m = l.match(/site=(\S+) attacker=(\S+)/))) { siteIP = m[1]; atkIP = m[2]; }
+    }
+
+    $("codes").innerHTML = codes.map(c => `<span class="code c${c[0]}">${c}</span>`).join("");
+    $("forged").textContent = forged ? "visitor's address" : "none yet";
+    $("atkBanned").textContent = atk ? (atk === "000" ? "000, no answer at all" : atk) : "pending";
+    $("ping").textContent = ping || "pending";
+    if (stats) {
+      const [pass, banD, rate, n] = stats, max = Math.max(pass, banD, rate, 1);
+      $("nPass").textContent = pass.toLocaleString(); $("nBan").textContent = banD.toLocaleString(); $("nRate").textContent = rate.toLocaleString();
+      $("bPass").style.transform = `scaleX(${pass / max})`; $("bBan").style.transform = `scaleX(${banD / max})`; $("bRate").style.transform = `scaleX(${rate / max})`;
+      if (rate) flood = (flood ? flood + ", " : "") + rate.toLocaleString() + " dropped";
+      if (n === 0 && ban && ban.on) ban = { on: false, ip: ban.ip };
+    }
+    $("flood").textContent = flood || "pending";
+    $("after").textContent = after || "pending";
+    $("atkWho").textContent = atkIP ? "VM " + atkIP : "second VM";
+    $("kWho").textContent = [siteIP ? "site VM " + siteIP : "site VM", kernel && "kernel " + kernel, mode && mode + " mode"].filter(Boolean).join(" · ");
+    $("banner").className = "banner" + (ban && ban.on ? " on" : "");
+    $("banner").textContent = ban ? (ban.on ? `BANNED in kernel: ${ban.ip}` : `ban on ${ban.ip} expired`) : "ban list empty";
+    $("visits").innerHTML = visits.map(v => `<span class="ok ${v === "200" ? "" : "bad"}">${v}</span>`).join("");
+    $("banned").textContent = bannedWho ? bannedWho.replace("anon:", "") + (forged && bannedWho.endsWith(forged) ? " (forged!)" : " (the attacker)") : "nobody yet";
+    $("hdr").textContent = hdr || "pending";
+
+    const log = $("log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+    log.textContent = lines.join("\n");
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  }
+
+  function setStatus(kind, text) {
+    $("status").className = "pill " + kind;
+    $("status").textContent = { replay: "Replay", dispatched: "Starting", running: "Live", done: "Finished", failed: "Failed" }[kind] || kind;
+    $("statusText").textContent = text;
+  }
+
+  // ---- replay of the recorded Azure run, played back at speed ----
+  async function replay() {
+    let text;
+    try { text = await (await fetch("live-sample.log")).text(); } catch { return; }
+    const all = text.split("\n");
+    let i = 0;
+    clearInterval(replayTimer);
+    replayTimer = setInterval(() => {
+      i = Math.min(all.length, i + 4);
+      render(all.slice(0, i));
+      if (i >= all.length) clearInterval(replayTimer);
+    }, 60);
+  }
+
+  // ---- the live run from the gateway ----
+  async function poll() {
+    let data;
+    try { data = await (await fetch(GW + "/v1/live-test")).json(); } catch { return schedule(5000); }
+    const run = data.run;
+    if (run && (run.status === "dispatched" || run.status === "running" || run.id === liveRunId)) {
+      clearInterval(replayTimer);
+      liveRunId = run.id;
+      render(run.lines);
+      const mins = Math.round((Date.now() - new Date(run.startedAt)) / 60000);
+      setStatus(run.status, { dispatched: "GitHub Actions is picking up the run…", running: `Running for ${mins} min. VMs are deleted at the end.`,
+        done: "Done. Both VMs were deleted.", failed: "The run failed. Its teardown step still deletes the VMs." }[run.status]);
+      $("run").disabled = run.status === "dispatched" || run.status === "running";
+    }
+    schedule(run && (run.status === "running" || run.status === "dispatched") ? 1500 : 6000);
+  }
+  let pollTimer;
+  function schedule(ms) { clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
+
+  // ---- login + start ----
+  function showControls() { $("login").hidden = !!token; $("run").hidden = !token; }
+  $("login").addEventListener("submit", async e => {
+    e.preventDefault(); $("err").textContent = "";
+    const slow = setTimeout(() => { $("err").textContent = "Waking the gateway (free hosting sleeps), about 30 seconds…"; }, 2500);
+    try {
+      const r = await fetch(GW + "/v1/auth/login", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: $("email").value.trim(), password: $("pass").value }) });
+      const d = await r.json();
+      if (!r.ok) { $("err").textContent = "Wrong email or password."; return; }
+      if (d.role !== "admin") { $("err").textContent = "Only an admin account can start a run."; return; }
+      token = d.token; try { sessionStorage.setItem("lp_live_token", token); } catch {}
+      showControls();
+    } catch { $("err").textContent = "Could not reach the gateway. Try again in a few seconds."; }
+    finally { clearTimeout(slow); }
+  });
+  $("run").addEventListener("click", async () => {
+    $("run").disabled = true;
+    try {
+      const r = await fetch(GW + "/v1/admin/live-test", { method: "POST", headers: { authorization: "Bearer " + token } });
+      const d = await r.json();
+      if (r.status === 401) { token = null; try { sessionStorage.removeItem("lp_live_token"); } catch {} showControls(); setStatus("failed", "Session expired, log in again."); return; }
+      if (!r.ok) { setStatus("failed", d.message || d.error); $("run").disabled = false; return; }
+      liveRunId = d.id; clearInterval(replayTimer); render(d.lines); setStatus("dispatched", "GitHub Actions is picking up the run…");
+      schedule(1500);
+    } catch { setStatus("failed", "Could not reach the gateway."); $("run").disabled = false; }
+  });
+
+  showControls();
+  replay();
+  fetch(GW + "/healthz").catch(() => {}); // wake the free instance early
+  poll();
+})();
+</script>
+</body>
+</html>

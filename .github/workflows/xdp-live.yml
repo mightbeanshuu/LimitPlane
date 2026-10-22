@@ -1,0 +1,100 @@
+# The "Run live test" button. The gateway dispatches this with a run id; it
+# builds two Azure VMs, runs xdp/azure/run-test.sh against them, streams the log
+# back to the gateway for the live page, and always deletes the VMs.
+#
+# Azure login is OIDC: no stored cloud secret. The federated credential trusts
+# only this repo's `azure-live` environment, and its role is Contributor on the
+# one resource group the VMs live in.
+name: XDP live test
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: id the gateway is waiting for (leave as manual to just run it)
+        default: manual
+      report_to:
+        description: gateway to stream the log to (empty = do not stream)
+        default: https://limitplane.onrender.com
+
+concurrency:
+  group: xdp-live # one pair of VMs at a time, whoever starts it
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    environment: azure-live
+    timeout-minutes: 25
+    env:
+      RG: limitplane-live
+      LOC: eastasia
+      SIZE: Standard_B2ats_v2
+      SITE_VM: lp-site-${{ github.run_id }}
+      ATK_VM: lp-atk-${{ github.run_id }}
+      KEY: ${{ github.workspace }}/ci_key
+      LOG: ${{ github.workspace }}/live.log
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Stream the log to the gateway
+        if: inputs.report_to != '' && inputs.run_id != 'manual'
+        env:
+          LIVE_TEST_INGEST_KEY: ${{ secrets.LIVE_TEST_INGEST_KEY }}
+        run: |
+          echo "## Runner started: $(date -u +%H:%M:%S) UTC" > "$LOG"
+          nohup python3 xdp/azure/stream.py "$LOG" "${{ inputs.report_to }}" "${{ inputs.run_id }}" > stream.out 2>&1 &
+
+      - name: Build linux binaries
+        run: |
+          echo "## Building limitplane and limitplane-xdp" >> "$LOG"
+          mkdir -p xdp/azure/bin
+          CGO_ENABLED=0 go build -o xdp/azure/bin/limitplane ./cmd/limitplane
+          (cd xdp && CGO_ENABLED=0 go build -o azure/bin/limitplane-xdp ./cmd/limitplane-xdp)
+          ssh-keygen -q -t ed25519 -N "" -f "$KEY"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create the VMs
+        id: vms
+        run: |
+          echo "## Creating two VMs in $LOC (about 2 minutes)" >> "$LOG"
+          SKIP_GROUP=1 xdp/azure/provision.sh | tee -a "$LOG" | grep -E '^(SITE|ATTACKER)=' >> "$GITHUB_OUTPUT"
+
+      - name: Run the attack
+        env:
+          SITE: ${{ steps.vms.outputs.SITE }}
+          ATTACKER: ${{ steps.vms.outputs.ATTACKER }}
+        run: |
+          sleep 20 # sshd on a fresh VM
+          COOLDOWN=60 VISITOR=runner APPEND_LOG=1 xdp/azure/run-test.sh
+
+      - name: Delete the VMs
+        if: always()
+        run: |
+          echo "## Deleting the VMs" >> "$LOG"
+          xdp/azure/teardown-rg.sh 2>&1 | tee -a "$LOG"
+
+      - name: Finish the stream
+        if: always()
+        run: |
+          echo "${{ job.status == 'success' && 'done' || 'failed' }}" > "$LOG.done"
+          for i in $(seq 1 30); do pgrep -f stream.py >/dev/null || break; sleep 1; done
+          cat stream.out 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-test-log
+          path: live.log

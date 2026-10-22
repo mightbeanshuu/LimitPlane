@@ -34,6 +34,7 @@ import (
 	"github.com/mightbeanshuu/limitplane/internal/k8s"
 	"github.com/mightbeanshuu/limitplane/internal/limiter"
 	"github.com/mightbeanshuu/limitplane/internal/live"
+	"github.com/mightbeanshuu/limitplane/internal/livetest"
 	"github.com/mightbeanshuu/limitplane/internal/operator"
 	"github.com/mightbeanshuu/limitplane/internal/orgstore"
 	"github.com/mightbeanshuu/limitplane/internal/policy"
@@ -319,6 +320,12 @@ func run(logger *slog.Logger) error {
 		Auth: auth, Orgs: orgs, Tenants: tenantStore, Billing: bill,
 		Explainer: explainer, TokenMeter: tokenMeter, Memory: memory,
 		Visitors: visitors, SSE: sse, WS: wsHub,
+		LiveTest: livetest.New(livetest.Config{
+			GitHubToken: os.Getenv("LIVE_TEST_GITHUB_TOKEN"),
+			Repo:        env("LIVE_TEST_REPO", "mightbeanshuu/LimitPlane"),
+			IngestKey:   os.Getenv("LIVE_TEST_INGEST_KEY"),
+			PublicURL:   env("LIVE_TEST_PUBLIC_URL", "https://limitplane.onrender.com"),
+		}),
 		GroqAPIKey: groqKey, Port: port, DefaultOrgID: defaultOrgID,
 		Logger: logger, Now: now, Version: version, Commit: commit,
 	})

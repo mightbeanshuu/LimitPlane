@@ -8,25 +8,30 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 KEY=${KEY:-$HOME/.ssh/limitplane_azure}
-LOG=session.log
+LOG=${LOG:-session.log}
 SSH="ssh -i $KEY -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o LogLevel=ERROR"
 ADMIN=$(openssl rand -hex 12)
-: > "$LOG"
+COOLDOWN=${COOLDOWN:-300}   # autopilot ban length in seconds; CI uses a short one
+ME=${VISITOR:-laptop}       # the normal visitor: this laptop, or the CI runner
+[ -n "${APPEND_LOG:-}" ] || : > "$LOG"
+
+# The admin key never reaches the log: every printed command has it masked.
+mask() { local t="$*"; printf '%s' "${t//$ADMIN/<admin-key>}"; }
 
 say()  { printf '\n## %s\n' "$*" | tee -a "$LOG"; }
-run()  { printf '\n[%s] laptop$ %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$LOG"; eval "$@" 2>&1 | tee -a "$LOG"; }
-site() { printf '\n[%s] site$ %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$LOG"; $SSH azureuser@"$SITE" "$@" 2>&1 | tee -a "$LOG"; }
-atk()  { printf '\n[%s] attacker$ %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$LOG"; $SSH azureuser@"$ATTACKER" "$@" 2>&1 | tee -a "$LOG"; }
+run()  { printf '\n[%s] %s$ %s\n' "$(date -u +%H:%M:%S)" "$ME" "$(mask "$*")" | tee -a "$LOG"; eval "$@" 2>&1 | tee -a "$LOG"; }
+site() { printf '\n[%s] site$ %s\n' "$(date -u +%H:%M:%S)" "$(mask "$*")" | tee -a "$LOG"; $SSH azureuser@"$SITE" "$@" 2>&1 | tee -a "$LOG"; }
+atk()  { printf '\n[%s] attacker$ %s\n' "$(date -u +%H:%M:%S)" "$(mask "$*")" | tee -a "$LOG"; $SSH azureuser@"$ATTACKER" "$@" 2>&1 | tee -a "$LOG"; }
 
 say "0. Who is who"
-run 'echo "site=$SITE attacker=$ATTACKER laptop=$(curl -s https://api.ipify.org)"'
+run 'echo "site=$SITE attacker=$ATTACKER $ME=$(curl -s https://api.ipify.org)"'
 site 'uname -sr; ip -br link show eth0; ethtool -i eth0 | head -2'
 
 say "1. Install: two static binaries and a demo shop (the tenant site)"
 run "scp -i $KEY -o LogLevel=ERROR bin/limitplane bin/limitplane-xdp azureuser@$SITE:~/"
 site "mkdir -p shop && printf '<h1>XYZ Shop</h1><p>Real tenant site, port 8080.</p>\n' > shop/index.html"
 site "cat > lp.json <<J
-{\"upstream\":\"http://127.0.0.1:8080\",\"port\":80,\"adminKey\":\"$ADMIN\",
+{\"upstream\":\"http://127.0.0.1:8080\",\"port\":80,\"adminKey\":\"$ADMIN\",\"cooldownSeconds\":$COOLDOWN,
  \"policy\":{\"tiers\":{\"free\":{\"capacity\":20,\"refillPerSecond\":1}},\"routes\":{\"*\":{\"costClass\":\"light\"}}}}
 J"
 site 'nohup python3 -m http.server 8080 --bind 127.0.0.1 -d shop >shop.log 2>&1 & sleep 1; curl -s -o /dev/null -w "shop direct: %{http_code}\n" http://127.0.0.1:8080/'
@@ -34,11 +39,11 @@ site 'sudo nohup ./limitplane --config lp.json >proxy.log 2>&1 & sleep 1; tail -
 site "sudo LIMITPLANE_ADMIN_KEY=$ADMIN nohup ./limitplane-xdp -iface eth0 -gateway http://127.0.0.1:80 -rate 2000 -burst 4000 >xdp.log 2>&1 & sleep 2; cat xdp.log"
 site 'sudo ./limitplane-xdp stats'
 
-say "2. A normal visitor (the laptop) gets the shop through LimitPlane"
+say "2. A normal visitor (the $ME) gets the shop through LimitPlane"
 run "curl -s -m 5 -D - http://$SITE/ | grep -E 'HTTP/|X-Ratelimit|XYZ'"
 
-say "3. Attacker floods HTTP with a FORGED X-Forwarded-For naming the laptop"
-run 'LAPTOP=$(curl -s https://api.ipify.org); echo "forging X-Forwarded-For: $LAPTOP"'
+say "3. Attacker floods HTTP with a FORGED X-Forwarded-For naming the $ME"
+run 'FORGED=$(curl -s https://api.ipify.org); echo "forging X-Forwarded-For: $FORGED"'
 atk "for i in \$(seq 1 80); do curl -s -m 3 -o /dev/null -w '%{http_code} ' -H 'X-Forwarded-For: $(curl -s https://api.ipify.org)' http://$SITE/; done; echo"
 site "curl -s -H 'X-LimitPlane-Admin: $ADMIN' http://127.0.0.1/_limitplane/autopilot | python3 -m json.tool | grep -A3 activeBans"
 
@@ -48,11 +53,11 @@ site 'sudo ./limitplane-xdp stats; grep -i ban xdp.log | tail -3'
 atk "curl -s -m 5 -o /dev/null -w 'attacker HTTP: %{http_code} (000 = no answer at all)\n' http://$SITE/; ping -c 3 -W 1 $SITE | tail -2"
 site 'sudo ./limitplane-xdp stats'
 
-say "5. Meanwhile the laptop (whose address was forged) is still served"
-run "for i in 1 2 3; do curl -s -m 5 -o /dev/null -w 'laptop HTTP: %{http_code}\n' http://$SITE/; done"
+say "5. Meanwhile the $ME (whose address was forged) is still served"
+run "for i in 1 2 3; do curl -s -m 5 -o /dev/null -w '$ME HTTP: %{http_code}\n' http://$SITE/; done"
 
-say "6. The ban expires in the kernel after the 5 minute cooldown"
-run 'sleep 305'
+say "6. The ban expires in the kernel after the ${COOLDOWN}s cooldown"
+run "sleep $((COOLDOWN + 5))"
 site 'sudo ./limitplane-xdp stats'
 atk "curl -s -m 5 -o /dev/null -w 'attacker HTTP after expiry: %{http_code}\n' http://$SITE/"
 

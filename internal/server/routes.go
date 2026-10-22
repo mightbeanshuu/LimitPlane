@@ -69,6 +69,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/admin/tenants", s.handleRetier)
 	s.mux.HandleFunc("POST /v1/admin/tiers", s.handleEditTier)
 
+	// ---- the XDP live test (see handlers_livetest.go) ----
+	s.mux.HandleFunc("POST /v1/admin/live-test", s.handleLiveTestStart)
+	s.mux.HandleFunc("POST /v1/live-test/ingest", s.handleLiveTestIngest)
+	s.mux.HandleFunc("GET /v1/live-test", s.handleLiveTestGet)
+
 	// ---- billing: never rate limited ----
 	s.mux.HandleFunc("GET /v1/billing/plans", s.handlePlans)
 	s.mux.HandleFunc("POST /v1/billing/checkout", s.handleCheckout)

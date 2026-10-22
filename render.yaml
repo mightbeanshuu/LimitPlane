@@ -27,6 +27,12 @@ services:
         sync: false
       - key: DASH_VIEWER_PASSWORD
         sync: false
+      # the "Run live test" button: a fine-grained GitHub token with Actions:
+      # write on this repo only, and the key the workflow posts its log with
+      - key: LIVE_TEST_GITHUB_TOKEN
+        sync: false
+      - key: LIVE_TEST_INGEST_KEY
+        sync: false
       - key: ALERT_WEBHOOK_URL
         sync: false
       # ---- Stripe: absent -> honest demo mode + /v1/billing/simulate ----

@@ -1,0 +1,189 @@
+
+## 0. Who is who
+
+[16:09:54] laptop$ echo "site=$SITE attacker=$ATTACKER laptop=$(curl -s https://api.ipify.org)"
+site=104.208.118.64 attacker=20.239.65.212 laptop=<laptop-ip>
+
+[16:09:54] site$ uname -sr; ip -br link show eth0; ethtool -i eth0 | head -2
+Linux 7.0.0-1017-azure
+eth0             UP             00:22:48:ec:c6:46 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+driver: hv_netvsc
+version: 7.0.0-1017-azure
+
+## 1. Install: two static binaries and a demo shop (the tenant site)
+
+[16:09:58] laptop$ scp -i ~/.ssh/limitplane_azure -o LogLevel=ERROR bin/limitplane bin/limitplane-xdp azureuser@104.208.118.64:~/
+
+[16:10:05] site$ mkdir -p shop && printf '<h1>XYZ Shop</h1><p>Real tenant site, port 8080.</p>\n' > shop/index.html
+
+[16:10:06] site$ cat > lp.json <<J
+{"upstream":"http://127.0.0.1:8080","port":80,"adminKey":"<admin-key>",
+ "policy":{"tiers":{"free":{"capacity":20,"refillPerSecond":1}},"routes":{"*":{"costClass":"light"}}}}
+J
+
+[16:10:08] site$ nohup python3 -m http.server 8080 --bind 127.0.0.1 -d shop >shop.log 2>&1 & sleep 1; curl -s -o /dev/null -w "shop direct: %{http_code}\n" http://127.0.0.1:8080/
+shop direct: 200
+
+[16:10:11] site$ sudo nohup ./limitplane --config lp.json >proxy.log 2>&1 & sleep 1; tail -3 proxy.log
+time=2026-10-22T16:10:12.656Z level=INFO msg="using policy from file" path=lp.json
+time=2026-10-22T16:10:12.657Z level=INFO msg="identifying visitors by socket address; pass --trust-proxy if a load balancer of yours sits in front"
+time=2026-10-22T16:10:12.657Z level=INFO msg="limitplane proxy up" listen=http://localhost:80 upstream=http://127.0.0.1:8080 dashboard=http://localhost:80/_limitplane/dashboard
+
+[16:10:13] site$ sudo LIMITPLANE_ADMIN_KEY=<admin-key> nohup ./limitplane-xdp -iface eth0 -gateway http://127.0.0.1:80 -rate 2000 -burst 4000 >xdp.log 2>&1 & sleep 2; cat xdp.log
+2026/10/22 16:10:15 INFO attached iface=eth0 mode=generic rate_pps=2000 burst=4000 pin=/sys/fs/bpf/limitplane
+
+[16:10:17] site$ sudo ./limitplane-xdp stats
+passed=67 dropped_banned=0 dropped_rate=0 banned_ips=0
+
+## 2. A normal visitor (the laptop) gets the shop through LimitPlane
+
+[16:10:19] laptop$ curl -s -m 5 -D - http://104.208.118.64/ | grep -E 'HTTP/|X-Ratelimit|XYZ'
+HTTP/1.1 200 OK
+Server: SimpleHTTP/0.6 Python/3.12.3
+X-Ratelimit-Limit: 20
+X-Ratelimit-Remaining: 19
+<h1>XYZ Shop</h1><p>Real tenant site, port 8080.</p>
+
+## 3. Attacker floods HTTP with a FORGED X-Forwarded-For naming the laptop
+
+[16:10:19] laptop$ LAPTOP=$(curl -s https://api.ipify.org); echo "forging X-Forwarded-For: $LAPTOP"
+forging X-Forwarded-For: <laptop-ip>
+
+[16:10:20] attacker$ for i in $(seq 1 80); do curl -s -m 3 -o /dev/null -w '%{http_code} ' -H 'X-Forwarded-For: <laptop-ip>' http://104.208.118.64/; done; echo
+200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 200 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 429 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 
+
+[16:11:57] site$ curl -s -H 'X-LimitPlane-Admin: <admin-key>' http://127.0.0.1/_limitplane/autopilot | python3 -m json.tool | grep -A3 activeBans
+    "activeBans": [
+        {
+            "tenantId": "anon:20.239.65.212",
+            "remainingMs": 204660
+
+## 4. Within a second the ban is in the kernel; attacker packets now die at the NIC
+
+[16:11:59] laptop$ sleep 2
+
+[16:12:01] site$ sudo ./limitplane-xdp stats; grep -i ban xdp.log | tail -3
+passed=736 dropped_banned=93 dropped_rate=0 banned_ips=1
+2026/10/22 16:10:24 INFO kernel ban ip=20.239.65.212 for=5m0s
+
+[16:12:03] attacker$ curl -s -m 5 -o /dev/null -w 'attacker HTTP: %{http_code} (000 = no answer at all)\n' http://104.208.118.64/; ping -c 3 -W 1 104.208.118.64 | tail -2
+attacker HTTP: 000 (000 = no answer at all)
+3 packets transmitted, 0 received, 100% packet loss, time 2024ms
+
+
+[16:12:13] site$ sudo ./limitplane-xdp stats
+passed=798 dropped_banned=98 dropped_rate=0 banned_ips=1
+
+## 5. Meanwhile the laptop (whose address was forged) is still served
+
+[16:12:14] laptop$ for i in 1 2 3; do curl -s -m 5 -o /dev/null -w 'laptop HTTP: %{http_code}\n' http://104.208.118.64/; done
+laptop HTTP: 200
+laptop HTTP: 200
+laptop HTTP: 200
+
+## 6. The ban expires in the kernel after the 5 minute cooldown
+
+[16:12:15] laptop$ sleep 305
+
+[16:17:20] site$ sudo ./limitplane-xdp stats
+passed=1817 dropped_banned=98 dropped_rate=0 banned_ips=0
+
+[16:17:22] attacker$ curl -s -m 5 -o /dev/null -w 'attacker HTTP after expiry: %{http_code}\n' http://104.208.118.64/
+attacker HTTP after expiry: 200
+
+## 7. Per-IP packet flood (UDP, no HTTP at all): the kernel token bucket
+
+[16:17:24] site$ sudo ./limitplane-xdp stats
+passed=1853 dropped_banned=98 dropped_rate=0 banned_ips=0
+
+[16:17:26] attacker$ python3 -c "
+import socket,time
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); t=time.time()
+for i in range(20000): s.sendto(b'x'*32,('104.208.118.64',9))
+print('sent 20000 UDP packets in %.2fs' % (time.time()-t))"
+sent 20000 UDP packets in 0.15s
+
+[16:17:27] laptop$ sleep 1
+
+[16:17:28] site$ sudo ./limitplane-xdp stats
+passed=1898 dropped_banned=98 dropped_rate=0 banned_ips=0
+
+## 8. Logs
+
+[16:17:30] site$ tail -5 proxy.log; tail -8 xdp.log
+time=2026-10-22T16:10:12.656Z level=INFO msg="using policy from file" path=lp.json
+time=2026-10-22T16:10:12.657Z level=INFO msg="identifying visitors by socket address; pass --trust-proxy if a load balancer of yours sits in front"
+time=2026-10-22T16:10:12.657Z level=INFO msg="limitplane proxy up" listen=http://localhost:80 upstream=http://127.0.0.1:8080 dashboard=http://localhost:80/_limitplane/dashboard
+2026/10/22 16:10:15 INFO attached iface=eth0 mode=generic rate_pps=2000 burst=4000 pin=/sys/fs/bpf/limitplane
+2026/10/22 16:10:24 INFO kernel ban ip=20.239.65.212 for=5m0s
+2026/10/22 16:15:24 INFO kernel unban ip=20.239.65.212
+
+## done
+
+## 7b. Step 7 again: Azure's NSG (host firewall) silently dropped the UDP above before it reached the VM, so UDP/9 is now opened in the NSG
+
+[16:17:57] laptop$ az network nsg rule list -g limitplane-xdp-live --nsg-name lp-siteNSG --query "[].{name:name,port:destinationPortRange,proto:protocol}" -o tsv
+default-allow-ssh	22	Tcp
+open-port-80	80	*
+allow-udp-9	9	Udp
+
+[16:17:59] site$ sudo ./limitplane-xdp stats
+passed=2035 dropped_banned=98 dropped_rate=0 banned_ips=0
+
+[16:18:00] attacker$ python3 -c "
+import socket,time
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); t=time.time()
+for i in range(20000): s.sendto(b\x27x\x27*32,(\x27104.208.118.64\x27,9))
+print(\x27sent 20000 UDP packets in %.2fs\x27 % (time.time()-t))"
+  File "<string>", line 4
+    for i in range(20000): s.sendto(b\x27x\x27*32,(\x27104.208.118.64\x27,9))
+                                      ^
+SyntaxError: unexpected character after line continuation character
+
+[16:18:02] laptop$ sleep 1
+
+[16:18:03] site$ sudo ./limitplane-xdp stats
+passed=2081 dropped_banned=98 dropped_rate=0 banned_ips=0
+
+## 7c. Normal traffic from the same attacker recovers once its packet bucket refills
+
+[16:18:05] laptop$ sleep 3
+
+[16:18:08] attacker$ curl -s -m 5 -o /dev/null -w "attacker HTTP: %{http_code}\n" http://104.208.118.64/
+attacker HTTP: 200
+
+[16:18:10] laptop$ curl -s -m 5 -o /dev/null -w "laptop HTTP: %{http_code}\n" http://104.208.118.64/
+laptop HTTP: 200
+
+## done (re-run)
+
+## 7d. The UDP flood again, from a script file (the inline python above had a quoting bug)
+
+[16:18:20] laptop$ scp -i ~/.ssh/limitplane_azure -o LogLevel=ERROR udpflood.py azureuser@20.239.65.212:~/
+
+[16:18:23] site$ sudo ./limitplane-xdp stats
+passed=2196 dropped_banned=98 dropped_rate=0 banned_ips=0
+
+[16:18:25] attacker$ python3 udpflood.py 104.208.118.64
+sent 20000 UDP packets in 0.14s
+
+[16:18:27] laptop$ sleep 1
+
+[16:18:28] site$ sudo ./limitplane-xdp stats; curl -s localhost:9091/metrics | grep -v ^#
+passed=6522 dropped_banned=98 dropped_rate=15719 banned_ips=0
+limitplane_xdp_packets_total{verdict="passed"} 6522
+limitplane_xdp_packets_total{verdict="dropped_banned"} 98
+limitplane_xdp_packets_total{verdict="dropped_rate"} 15719
+limitplane_xdp_banned_ips 0
+
+## 7e. The flooder recovers once its packet bucket refills; other visitors were never affected
+
+[16:18:30] laptop$ sleep 3
+
+[16:18:33] attacker$ curl -s -m 5 -o /dev/null -w "attacker HTTP: %{http_code}\n" http://104.208.118.64/
+attacker HTTP: 200
+
+[16:18:35] laptop$ curl -s -m 5 -o /dev/null -w "laptop HTTP: %{http_code}\n" http://104.208.118.64/
+laptop HTTP: 200
+
+## done (final)

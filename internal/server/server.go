@@ -23,6 +23,7 @@ import (
 	"github.com/mightbeanshuu/limitplane/internal/gateway"
 	"github.com/mightbeanshuu/limitplane/internal/limiter"
 	"github.com/mightbeanshuu/limitplane/internal/live"
+	"github.com/mightbeanshuu/limitplane/internal/livetest"
 	"github.com/mightbeanshuu/limitplane/internal/operator"
 	"github.com/mightbeanshuu/limitplane/internal/orgstore"
 	"github.com/mightbeanshuu/limitplane/internal/policy"
@@ -51,6 +52,7 @@ type Deps struct {
 	Visitors     *live.Visitors
 	SSE          *live.SSE
 	WS           *wshub.Hub
+	LiveTest     *livetest.Runner // nil-safe: an unconfigured runner only replays
 	GroqAPIKey   string
 	Port         string
 	DefaultOrgID string
@@ -86,6 +88,9 @@ func New(d Deps) *Server {
 	if d.Now == nil {
 		d.Now = limiter.SystemClock
 	}
+	if d.LiveTest == nil {
+		d.LiveTest = livetest.New(livetest.Config{})
+	}
 	s := &Server{Deps: d, mux: http.NewServeMux(), stop: make(chan struct{})}
 	s.routes()
 	return s
@@ -100,7 +105,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Access-Control-Allow-Origin", "*")
 		h.Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "content-type,x-api-key,authorization")
+		h.Set("Access-Control-Allow-Headers", "content-type,x-api-key,authorization,x-ingest-key")
 		h.Set("Access-Control-Allow-Private-Network", "true")
 		w.WriteHeader(http.StatusNoContent)
 		return
