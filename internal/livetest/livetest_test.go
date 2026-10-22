@@ -121,7 +121,13 @@ func TestDailyCapAndFailedDispatchRefund(t *testing.T) {
 	if _, err := r.Start(context.Background(), "a"); !errors.Is(err, ErrDailyCap) {
 		t.Fatalf("third run: %v, want ErrDailyCap", err)
 	}
+	if left := r.RunsLeft(); left != 0 {
+		t.Fatalf("RunsLeft = %d after the cap, want 0", left)
+	}
 	now = now.Add(24 * time.Hour)
+	if left := r.RunsLeft(); left != 2 {
+		t.Fatalf("RunsLeft = %d on a new day, want 2", left)
+	}
 	if _, err := r.Start(context.Background(), "a"); err != nil {
 		t.Fatalf("next day: %v", err)
 	}

@@ -197,6 +197,16 @@ func (r *Runner) Ingest(key, runID string, lines []string, status string) error 
 	return nil
 }
 
+// RunsLeft is how many runs today's cap still allows.
+func (r *Runner) RunsLeft() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cfg.Now().UTC().Format("2006-01-02") != r.day {
+		return r.cfg.DailyCap
+	}
+	return max(0, r.cfg.DailyCap-r.runsUsed)
+}
+
 // Current is the run the page shows: the live one, or the last one finished.
 func (r *Runner) Current() (Run, bool) {
 	r.mu.Lock()

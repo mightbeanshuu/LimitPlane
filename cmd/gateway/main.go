@@ -325,6 +325,7 @@ func run(logger *slog.Logger) error {
 			Repo:        env("LIVE_TEST_REPO", "mightbeanshuu/LimitPlane"),
 			IngestKey:   os.Getenv("LIVE_TEST_INGEST_KEY"),
 			PublicURL:   env("LIVE_TEST_PUBLIC_URL", "https://limitplane.onrender.com"),
+			DailyCap:    5,
 		}),
 		GroqAPIKey: groqKey, Port: port, DefaultOrgID: defaultOrgID,
 		Logger: logger, Now: now, Version: version, Commit: commit,

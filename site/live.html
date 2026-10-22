@@ -43,8 +43,6 @@
   .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line);font-weight:600}
   .btn:disabled{opacity:.5;cursor:not-allowed}
   .btn:focus-visible,input:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
-  form.login{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-  form.login input{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;min-width:0;width:190px}
   .err{color:var(--rose);font-size:14px;width:100%}
   .stages{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
   .stage{font-size:13px;padding:5px 10px;border-radius:7px;background:var(--panel2);border:1px solid var(--line);color:var(--faint)}
@@ -80,6 +78,18 @@
   details.log summary{cursor:pointer;padding:10px 14px;color:#cbd5e1;font-size:14px}
   pre#log{color:#cbd5e1;font:12px/1.5 var(--mono);padding:0 14px 14px;max-height:420px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
   .note{color:var(--faint);font-size:13px;margin-top:14px;max-width:80ch}
+  .btn.big{font-size:16px;padding:12px 22px}
+  .left{color:var(--faint);font-size:13px}
+  .progress{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:16px}
+  .progress .row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 16px;margin-bottom:8px}
+  .progress .step{font-weight:600}
+  .progress .eta{color:var(--dim);font:13px/1.4 var(--mono)}
+  .progress .track{height:10px}
+  .progress .fill{background:var(--sky)}
+  .explain{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:14px}
+  .explain p{font-size:14px;color:var(--dim);min-width:0}
+  .explain b{color:var(--text)}
+  @media (max-width:860px){.explain{grid-template-columns:1fr}}
   @media (prefers-reduced-motion:reduce){.fill{transition:none}}
 </style>
 </head>
@@ -98,17 +108,23 @@
     <span id="status" class="pill replay">Replay</span>
     <span id="statusText">Showing the recorded run from 22 Oct 2026.</span>
     <span class="spacer"></span>
-    <form class="login" id="login" hidden>
-      <input id="email" type="email" placeholder="admin email" autocomplete="username" required>
-      <input id="pass" type="password" placeholder="password" autocomplete="current-password" required>
-      <button class="btn ghost" type="submit">Log in</button>
-      <span class="err" id="err"></span>
-    </form>
-    <button class="btn" id="run" hidden>Run live test</button>
+    <span class="left" id="left"></span>
+    <button class="btn big" id="run" disabled>Run live test</button>
     <a id="actions" class="btn ghost" href="https://github.com/mightbeanshuu/LimitPlane/actions/workflows/xdp-live.yml" target="_blank" rel="noopener">GitHub Actions</a>
   </div>
 
-  <div class="stages" id="stages"></div>
+  <div class="progress">
+    <div class="row"><span class="step" id="step">Press Run to start a real test on Azure. It takes about 6 minutes.</span><span class="eta" id="eta"></span></div>
+    <div class="track"><div class="fill" id="pbar"></div></div>
+  </div>
+
+  <div class="explain">
+    <p><b>Attacker.</b> A second VM sends requests as fast as it can and lies about who it is (a fake X-Forwarded-For). Green got through, amber was rate limited, red got no answer at all.</p>
+    <p><b>Kernel.</b> LimitPlane bans the attacker, and within a second the ban is copied into the network card's eBPF program. From then on its packets are dropped before Linux or the app see them.</p>
+    <p><b>Normal visitor.</b> The address the attacker pretended to be. It keeps getting the shop the whole time, which shows the fake header did not work.</p>
+  </div>
+
+  <details class="log" id="stagesBox" style="margin:0 0 14px"><summary>Every step of this run</summary><div class="stages" id="stages" style="padding:0 14px 14px"></div></details>
 
   <div class="lanes">
     <section class="lane">
@@ -149,19 +165,19 @@
     <summary>Full session log (every command and its output)</summary>
     <pre id="log"></pre>
   </details>
-  <p class="note">Starting a run needs an admin login and is limited to a few runs a day, because each one uses real cloud credit. Anyone can watch. The scripts are in <a href="https://github.com/mightbeanshuu/LimitPlane/tree/main/xdp/azure">xdp/azure</a>.</p>
+  <p class="note">Anyone can start a run. Each one creates and deletes two real VMs, so there is one run at a time and five a day, and the button itself is rate limited by LimitPlane. If a run is already going, this page shows it. The scripts are in <a href="https://github.com/mightbeanshuu/LimitPlane/tree/main/xdp/azure">xdp/azure</a>.</p>
 </div>
 
 <script>
 (() => {
   const GW = window.LP_GATEWAY, $ = id => document.getElementById(id);
   const esc = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-  let token = null, liveRunId = null, replayTimer = null;
-  try { token = sessionStorage.getItem("lp_live_token"); } catch {}
+  let liveRunId = null, replayTimer = null;
 
   // ---- turn log lines into the three lanes ----
   function render(lines) {
     const stages = lines.filter(l => l.startsWith("## ")).map(l => l.slice(3));
+    progress(stages);
     $("stages").innerHTML = stages.map((s, i) =>
       `<span class="stage ${i === stages.length - 1 ? "now" : "seen"}">${esc(s)}</span>`).join("");
 
@@ -211,6 +227,32 @@
     if (atBottom) log.scrollTop = log.scrollHeight;
   }
 
+  // Friendly steps, matched against the log's "## " headings. secs = rough
+  // time from the click to the end of that step, for the "minutes left" hint.
+  const STEPS = [
+    { re: /^Asking GitHub/, text: "Starting a cloud runner on GitHub Actions", secs: 25 },
+    { re: /^(Runner started|Building)/, text: "Building LimitPlane and the eBPF agent", secs: 70 },
+    { re: /^Creating two VMs/, text: "Creating two Azure VMs (the slow part)", secs: 190 },
+    { re: /^[01]\./, text: "Installing the shop, LimitPlane and the kernel program", secs: 215 },
+    { re: /^[23]\./, text: "The attacker is flooding the shop", secs: 240 },
+    { re: /^[45]\./, text: "Banned: the kernel is dropping the attacker", secs: 260 },
+    { re: /^6\./, text: "Waiting for the ban to expire", secs: 360 },
+    { re: /^(7|8)/, text: "Packet flood: the kernel's per-IP limit", secs: 380 },
+    { re: /^(done|Deleting)/, text: "Deleting both VMs", secs: 440 },
+  ];
+  let runStart = null, finished = false;
+  function progress(stages) {
+    let idx = -1;
+    for (const st of stages) STEPS.forEach((s, i) => { if (s.re.test(st)) idx = Math.max(idx, i); });
+    if (idx < 0) return;
+    const total = STEPS.length, done = finished ? total : idx + 1;
+    $("pbar").style.transform = `scaleX(${done / total})`;
+    $("step").textContent = finished ? "Finished. Both VMs were deleted." : `Step ${idx + 1} of ${total}: ${STEPS[idx].text}`;
+    if (finished || !runStart) { $("eta").textContent = ""; return; }
+    const el = Math.round((Date.now() - runStart) / 1000), left = Math.max(0, STEPS[total - 1].secs - el);
+    $("eta").textContent = `${Math.floor(el / 60)}:${String(el % 60).padStart(2, "0")} elapsed · about ${Math.max(1, Math.round(left / 60))} min left`;
+  }
+
   function setStatus(kind, text) {
     $("status").className = "pill " + kind;
     $("status").textContent = { replay: "Replay", dispatched: "Starting", running: "Live", done: "Finished", failed: "Failed" }[kind] || kind;
@@ -227,7 +269,7 @@
     replayTimer = setInterval(() => {
       i = Math.min(all.length, i + 4);
       render(all.slice(0, i));
-      if (i >= all.length) clearInterval(replayTimer);
+      if (i >= all.length) { clearInterval(replayTimer); $("step").textContent = "This is a recording of a real run. Press Run to start a new one on Azure."; $("pbar").style.transform = "scaleX(1)"; }
     }, 60);
   }
 
@@ -235,50 +277,43 @@
   async function poll() {
     let data;
     try { data = await (await fetch(GW + "/v1/live-test")).json(); } catch { return schedule(5000); }
-    const run = data.run;
-    if (run && (run.status === "dispatched" || run.status === "running" || run.id === liveRunId)) {
+    const run = data.run, busy = run && (run.status === "dispatched" || run.status === "running");
+    $("left").textContent = data.configured && typeof data.runsLeftToday === "number" ? `${data.runsLeftToday} of 5 runs left today` : "";
+    $("run").disabled = !data.configured || busy || data.runsLeftToday === 0;
+    if (run && (busy || run.id === liveRunId)) {
       clearInterval(replayTimer);
       liveRunId = run.id;
+      runStart = new Date(run.startedAt).getTime();
+      finished = run.status === "done";
       render(run.lines);
       const mins = Math.round((Date.now() - new Date(run.startedAt)) / 60000);
       setStatus(run.status, { dispatched: "GitHub Actions is picking up the run…", running: `Running for ${mins} min. VMs are deleted at the end.`,
         done: "Done. Both VMs were deleted.", failed: "The run failed. Its teardown step still deletes the VMs." }[run.status]);
-      $("run").disabled = run.status === "dispatched" || run.status === "running";
     }
     schedule(run && (run.status === "running" || run.status === "dispatched") ? 1500 : 6000);
   }
   let pollTimer;
   function schedule(ms) { clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
 
-  // ---- login + start ----
-  function showControls() { $("login").hidden = !!token; $("run").hidden = !token; }
-  $("login").addEventListener("submit", async e => {
-    e.preventDefault(); $("err").textContent = "";
-    const slow = setTimeout(() => { $("err").textContent = "Waking the gateway (free hosting sleeps), about 30 seconds…"; }, 2500);
-    try {
-      const r = await fetch(GW + "/v1/auth/login", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: $("email").value.trim(), password: $("pass").value }) });
-      const d = await r.json();
-      if (!r.ok) { $("err").textContent = "Wrong email or password."; return; }
-      if (d.role !== "admin") { $("err").textContent = "Only an admin account can start a run."; return; }
-      token = d.token; try { sessionStorage.setItem("lp_live_token", token); } catch {}
-      showControls();
-    } catch { $("err").textContent = "Could not reach the gateway. Try again in a few seconds."; }
-    finally { clearTimeout(slow); }
-  });
+  // ---- start ----
   $("run").addEventListener("click", async () => {
     $("run").disabled = true;
+    setStatus("dispatched", "Starting…");
     try {
-      const r = await fetch(GW + "/v1/admin/live-test", { method: "POST", headers: { authorization: "Bearer " + token } });
+      const r = await fetch(GW + "/v1/live-test/start", { method: "POST" });
       const d = await r.json();
-      if (r.status === 401) { token = null; try { sessionStorage.removeItem("lp_live_token"); } catch {} showControls(); setStatus("failed", "Session expired, log in again."); return; }
-      if (!r.ok) { setStatus("failed", d.message || d.error); $("run").disabled = false; return; }
-      liveRunId = d.id; clearInterval(replayTimer); render(d.lines); setStatus("dispatched", "GitHub Actions is picking up the run…");
+      if (!r.ok) {
+        setStatus("failed", d.message || (r.status === 429 ? "Slow down: the button is rate limited. Try again in a minute." : d.error));
+        schedule(1500);
+        return;
+      }
+      liveRunId = d.id; runStart = Date.now(); finished = false;
+      clearInterval(replayTimer); render(d.lines);
+      setStatus("dispatched", "GitHub Actions is picking up the run…");
       schedule(1500);
-    } catch { setStatus("failed", "Could not reach the gateway."); $("run").disabled = false; }
+    } catch { setStatus("failed", "Could not reach the gateway. It may be waking up; try again in 30 seconds."); $("run").disabled = false; }
   });
 
-  showControls();
   replay();
   fetch(GW + "/healthz").catch(() => {}); // wake the free instance early
   poll();

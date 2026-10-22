@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/mightbeanshuu/limitplane/internal/gateway"
 	"github.com/mightbeanshuu/limitplane/internal/livetest"
 )
 
@@ -27,12 +28,27 @@ func (s *Server) handleLiveTestStart(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	run, err := s.LiveTest.Start(r.Context(), claims.Sub)
+	s.startLiveTest(w, r, claims.Sub)
+}
+
+// handleLiveTestStartPublic is the same start for anyone, recorded by address.
+func (s *Server) handleLiveTestStartPublic(w http.ResponseWriter, r *http.Request) {
+	if !s.LiveTest.Configured() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "live_test_not_configured", "message": "The live test is not set up on this gateway.",
+		})
+		return
+	}
+	s.startLiveTest(w, r, "anon:"+gateway.ClientIP(r))
+}
+
+func (s *Server) startLiveTest(w http.ResponseWriter, r *http.Request, who string) {
+	run, err := s.LiveTest.Start(r.Context(), who)
 	switch {
 	case errors.Is(err, livetest.ErrBusy):
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "busy", "message": err.Error()})
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "busy", "message": "A test is already running. You can watch it here."})
 	case errors.Is(err, livetest.ErrDailyCap):
-		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "daily_cap", "message": err.Error()})
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "daily_cap", "message": "Today's live tests are used up. The recorded run is still here to watch."})
 	case err != nil:
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "dispatch_failed", "message": err.Error(), "run": run})
 	default:
@@ -64,7 +80,8 @@ func (s *Server) handleLiveTestIngest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLiveTestGet(w http.ResponseWriter, r *http.Request) {
 	run, ok := s.LiveTest.Current()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"configured": s.LiveTest.Configured(),
-		"run":        map[bool]any{true: run, false: nil}[ok],
+		"configured":    s.LiveTest.Configured(),
+		"runsLeftToday": s.LiveTest.RunsLeft(),
+		"run":           map[bool]any{true: run, false: nil}[ok],
 	})
 }

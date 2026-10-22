@@ -100,6 +100,11 @@ func (s *Server) guardedRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handleEcho(w, r)
 	case r.URL.Path == "/v1/demo/ping":
 		s.handlePing(w, r)
+	case r.URL.Path == "/v1/live-test/start" && r.Method == http.MethodPost:
+		// Public on purpose, so a visitor can press the button with no
+		// account. It sits behind the limiter like any other guarded route,
+		// and livetest's one-at-a-time slot and daily cap bound the spend.
+		s.handleLiveTestStartPublic(w, r)
 	default:
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not_found"})
 	}
