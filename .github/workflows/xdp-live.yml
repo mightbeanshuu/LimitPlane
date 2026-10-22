@@ -78,7 +78,7 @@ jobs:
           ATTACKER: ${{ steps.vms.outputs.ATTACKER }}
         run: |
           sleep 20 # sshd on a fresh VM
-          COOLDOWN=60 VISITOR=runner APPEND_LOG=1 xdp/azure/run-test.sh
+          COOLDOWN=90 VISITOR=runner APPEND_LOG=1 xdp/azure/run-test.sh
 
       - name: Delete the VMs
         if: always()

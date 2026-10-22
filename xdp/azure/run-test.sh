@@ -44,7 +44,9 @@ run "curl -s -m 5 -D - http://$SITE/ | grep -E 'HTTP/|X-Ratelimit|XYZ'"
 
 say "3. Attacker floods HTTP with a FORGED X-Forwarded-For naming the $ME"
 run 'FORGED=$(curl -s https://api.ipify.org); echo "forging X-Forwarded-For: $FORGED"'
-atk "for i in \$(seq 1 80); do curl -s -m 3 -o /dev/null -w '%{http_code} ' -H 'X-Forwarded-For: $(curl -s https://api.ipify.org)' http://$SITE/; done; echo"
+# Stops after 3 requests in a row get no answer: by then the kernel has it, and
+# waiting out more timeouts would let a short demo cooldown expire mid-test.
+atk "n=0; for i in \$(seq 1 80); do c=\$(curl -s -m 2 -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: $(curl -s https://api.ipify.org)' http://$SITE/); printf '%s ' \$c; if [ \$c = 000 ]; then n=\$((n+1)); else n=0; fi; [ \$n -ge 3 ] && break; done; echo"
 site "curl -s -H 'X-LimitPlane-Admin: $ADMIN' http://127.0.0.1/_limitplane/autopilot | python3 -m json.tool | grep -A3 activeBans"
 
 say "4. Within a second the ban is in the kernel; attacker packets now die at the NIC"
