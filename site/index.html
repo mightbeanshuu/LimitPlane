@@ -160,16 +160,17 @@
 
 <header class="hero">
   <div class="wrap">
-    <span class="pill">181,000+ checks/sec · zero dependencies · Stripe-automated plans</span>
+    <span class="pill">Written in Go · zero dependencies · Kubernetes operator · Stripe-automated plans</span>
     <h1>Rate limiting that knows<br>what <span class="hl">AI actually costs</span></h1>
-    <p class="sub">A ping costs microseconds. An AI call costs real GPU money. LimitPlane prices every request by cost class, meters it against a monthly plan, and flips tiers automatically when customers pay. Attach it to any site with one command.</p>
+    <p class="sub">A ping costs microseconds. An AI call costs real GPU money. LimitPlane prices every request by cost class, meters it against a monthly plan, and flips tiers automatically when customers pay. Put it in front of any site with one binary.</p>
     <div class="cta">
       <a class="btn btn-pri" href="/dashboard">Open the live dashboard</a>
       <a class="btn btn-sec" href="#attach">Attach it to your site</a>
     </div>
     <div class="oneliner">
       <span class="lbl">THE WHOLE INSTALL</span>
-      <pre>npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080</pre>
+      <pre>go install github.com/mightbeanshuu/limitplane/cmd/limitplane@latest
+limitplane --upstream http://localhost:8080</pre>
     </div>
   </div>
 </header>
@@ -205,54 +206,55 @@
   <div class="wrap">
     <div class="kicker">Attach</div>
     <h2>Attach to any site in a few steps</h2>
-    <p class="lede">Run the proxy in front of anything (Python, PHP, Rails, even a static site; it never knows the layer is there), or import the middleware if you're on Node.</p>
+    <p class="lede">Run the proxy in front of anything (Python, PHP, Rails, even a static site; it never knows the layer is there), or run it on Kubernetes and rate-limit every service behind your ingress.</p>
     <div class="tabs">
       <button class="tab on" data-t="proxy">Any site (proxy)</button>
-      <button class="tab" data-t="node">Node / Express (middleware)</button>
+      <button class="tab" data-t="k8s">Kubernetes (operator)</button>
     </div>
     <div class="tabpanel on" id="p-proxy">
       <div class="step"><div class="n">1</div><div>
         <h3>One command. Protected.</h3>
-        <p>No install, no clone, no config. Point it at your site and send traffic to port 3000. Every visitor gets 60 requests/minute out of the box.</p>
-        <div class="code"><pre>npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080</pre><button class="copy">copy</button></div>
+        <p>One static Go binary, no config. Point it at your site and send traffic to port 3000. Every visitor gets 60 requests/minute out of the box.</p>
+        <div class="code"><pre>go install github.com/mightbeanshuu/limitplane/cmd/limitplane@latest
+limitplane --upstream http://localhost:8080</pre><button class="copy">copy</button></div>
       </div></div>
       <div class="step"><div class="n">2</div><div>
         <h3>Price your AI routes with flags</h3>
         <p>Mark expensive endpoints heavy (5 tokens each) and tune the per-visitor budget.</p>
-        <div class="code"><pre>npx github:mightbeanshuu/LimitPlane --upstream http://localhost:8080 \
+        <div class="code"><pre>limitplane --upstream http://localhost:8080 \
   --rpm 120 --heavy /api/ai-scan,/api/generate</pre><button class="copy">copy</button></div>
       </div></div>
       <div class="step"><div class="n">3</div><div>
         <h3>Go multi-tenant when you're ready</h3>
         <p>A config file adds tiers, API keys, monthly quotas, and per-customer budgets. Blocked requests get a clean 429 and never reach your servers.</p>
         <div class="code"><pre>cp limitplane.config.example.json limitplane.config.json
-node bin/limitplane.js --config limitplane.config.json</pre><button class="copy">copy</button></div>
+limitplane --config limitplane.config.json</pre><button class="copy">copy</button></div>
       </div></div>
     </div>
-    <div class="tabpanel" id="p-node">
+    <div class="tabpanel" id="p-k8s">
       <div class="step"><div class="n">1</div><div>
-        <h3>Install straight from GitHub</h3>
-        <div class="code"><pre>npm install github:mightbeanshuu/LimitPlane</pre><button class="copy">copy</button></div>
+        <h3>Spin up the whole story on kind</h3>
+        <p>Three-node cluster, CRDs, the operator, the gateway with Redis, live traffic, and proof the limit holds.</p>
+        <div class="code"><pre>git clone https://github.com/mightbeanshuu/LimitPlane && cd LimitPlane
+make kind-demo</pre><button class="copy">copy</button></div>
       </div></div>
       <div class="step"><div class="n">2</div><div>
-        <h3>Create the layer with your policy</h3>
-        <div class="code"><pre>import { createLimitPlane } from "limitplane";
-
-const lp = createLimitPlane({ policy: {
-  tiers:  { free: { capacity: 10, refillPerSecond: 1, monthlyQuota: 1000 },
-            pro:  { capacity: 50, refillPerSecond: 5, monthlyQuota: 50000 } },
-  routes: { "/v1/scan": { costClass: "heavy" },
-            "*":        { costClass: "light" } },
-  tenants:{ "customer-key": { tenantId: "acme", tier: "pro" } },
-}});</pre><button class="copy">copy</button></div>
+        <h3>Rate limits are Kubernetes objects</h3>
+        <p>Change a limit with a reviewed pull request or <code>kubectl patch</code>. It takes effect in under a second with zero pod restarts.</p>
+        <div class="code"><pre>apiVersion: limitplane.dev/v1alpha1
+kind: RateLimitPolicy
+metadata: {name: api-limits}
+spec:
+  tiers:
+    pro: {capacity: 50, refillPerSecond: 5, monthlyQuota: 50000}
+  routes:
+    - {path: /v1/ai/generate, costClass: heavy}   # 5 tokens, not 1</pre><button class="copy">copy</button></div>
       </div></div>
       <div class="step"><div class="n">3</div><div>
-        <h3>Mount it and you're done</h3>
-        <div class="code"><pre>app.use(lp.middleware);            // Express / connect
-
-// or on plain node:http:
-const d = await lp.middleware(req, res);
-if (!d.allowed) return;            // 429 already sent</pre><button class="copy">copy</button></div>
+        <h3>Protect services it never sees</h3>
+        <p><code>/v1/authz</code> speaks Envoy ext_authz, NGINX auth_request and Traefik ForwardAuth, so every workload behind your gateway is limited with no sidecar and no code change. <code>kubectl get</code> shows live allowed / blocked counts.</p>
+        <div class="code"><pre>kubectl get ratelimitpolicies   # NAME  TIERS  ROUTES  ALLOWED  BLOCKED  READY
+kubectl get tenants             # NAME  TENANT  TIER  ALLOWED  BLOCKED  LANE</pre><button class="copy">copy</button></div>
       </div></div>
     </div>
   </div>
@@ -324,13 +326,14 @@ if (!d.allowed) return;            // 429 already sent</pre><button class="copy"
     <h2>Small, honest engineering</h2>
     <p class="lede" style="margin-bottom:26px">A learning-grade codebase you can actually read: every file is commented like a lesson.</p>
     <div class="feat">
-      <div class="card"><h3><span class="ic"></span>8 limiter algorithms</h3><p>Fixed window, sliding log and counter, token bucket, leaky bucket, monthly quota, plus two distributed Redis variants. All from scratch, all tested.</p></div>
-      <div class="card"><h3><span class="ic"></span>Billing you can read</h3><p>Stripe integration in one file with zero SDKs: raw HTTPS, form encoding, and one HMAC for webhook signatures. Swap in the official SDK later; nothing structural changes.</p></div>
+      <div class="card"><h3><span class="ic"></span>6 limiter algorithms</h3><p>Fixed window, sliding log, sliding counter, token bucket, leaky bucket and monthly quota, plus Redis versions where an atomic Lua script reads Redis's clock so every replica shares one budget.</p></div>
+      <div class="card"><h3><span class="ic"></span>Billing you can read</h3><p>Stripe integration with zero SDKs: raw HTTPS, form encoding, and one HMAC for webhook signatures. Swap in the official SDK later; nothing structural changes.</p></div>
       <div class="card"><h3><span class="ic"></span>Two-meter design</h3><p>The monthly meter protects the customer's wallet; the burst bucket protects your servers. A blocked plan never drains burst tokens.</p></div>
       <div class="card"><h3><span class="ic"></span>Tenant isolation</h3><p>Buckets are keyed tenant:tier:route. One customer burning their budget mathematically cannot touch anyone else's.</p></div>
       <div class="card"><h3><span class="ic"></span>Autopilot with an AI voice</h3><p>Quota alerts at 80%, upgrade nudges at the cap, and auto-cooldown bans for retry-storms. Each action ships with an LLM-written incident note based on real audit facts, falling back to templates when no key is set.</p></div>
-      <div class="card"><h3><span class="ic"></span>Deterministic tests</h3><p>Injectable clocks everywhere, so tests fast-forward to next month instead of sleeping. 32 unit tests cover allow, block, reset, isolation, billing, and the autopilot.</p></div>
-      <div class="card"><h3><span class="ic"></span>Fails loudly</h3><p>Unknown tiers, plans, or cost classes throw at config time. Unsigned webhooks are rejected before a byte is trusted.</p></div>
+      <div class="card"><h3><span class="ic"></span>Deterministic tests</h3><p>Injectable clocks everywhere, so tests fast-forward to next month instead of sleeping. 400+ Go tests cover allow, block, reset, isolation, billing and the autopilot, and CI runs a real kind cluster end to end.</p></div>
+      <div class="card"><h3><span class="ic"></span>Kubernetes, hand-written</h3><p>An operator with its own API client: watch loop with 410 recovery, leader election on Leases, finalizers and a Prometheus exporter, all on the Go standard library.</p></div>
+      <div class="card"><h3><span class="ic"></span>Fails loudly</h3><p>Unknown tiers, plans or cost classes are rejected at config time. Unsigned webhooks are rejected before a byte is trusted.</p></div>
     </div>
   </div>
 </section>
@@ -420,6 +423,8 @@ if (!d.allowed) return;            // 429 already sent</pre><button class="copy"
 
 <script>
   window.LP_GATEWAY = "https://limitplane.onrender.com";
+  // wake the free-tier gateway now, so the dashboard is warm by the time someone opens it
+  fetch(LP_GATEWAY + "/healthz", { mode: "no-cors" }).catch(() => {});
   function toast(html, ms){ const t = document.getElementById("toast"); t.innerHTML = html; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), ms || 6000); }
   async function upgradeStripe(e){
     e.preventDefault();

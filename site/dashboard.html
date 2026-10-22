@@ -214,6 +214,7 @@
     <div class="hint" style="margin-top:16px">
       <span id="lSwitch" style="cursor:pointer;color:var(--sky)" onclick="toggleAuthMode()">New here? Create an account</span>
     </div>
+    <button class="loginbtn" id="lDemo" style="margin-top:12px;background:transparent;border:1px solid var(--sky);color:var(--sky)" onclick="demoLogin()">Try the live demo (no sign-up)</button>
     <div class="hint" style="margin-top:14px;opacity:.75">demo admin: demo@limitplane.dev · demo123</div>
   </div>
 </div>
@@ -356,13 +357,32 @@
     $("lSwitch").textContent = authMode === "login" ? "New here? Create an account" : "Have an account? Sign in";
     $("lErr").textContent = "";
   }
+  function demoLogin(){
+    if (authMode === "signup") toggleAuthMode();
+    $("lEmail").value = "demo@limitplane.dev"; $("lPass").value = "demo123";
+    doAuth();
+  }
   async function doAuth(){
     const email = $("lEmail").value.trim(), password = $("lPass").value;
     if (!email || !password){ $("lErr").textContent = "email and password required"; return; }
     const path = authMode === "signup" ? "/v1/auth/signup" : "/v1/auth/login";
-    const r = await fetch(GW + path, { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, password }) });
-    const data = await r.json();
+    const btns = [$("lBtn"), $("lDemo")].filter(Boolean);
+    btns.forEach(b => b.disabled = true);
+    $("lErr").textContent = "";
+    // the hosted gateway sleeps when idle; tell the visitor instead of looking frozen
+    const slow = setTimeout(() => { $("lErr").textContent = "Waking the server up (free hosting sleeps when idle), about 15 seconds…"; }, 2500);
+    let r, data;
+    try {
+      r = await fetch(GW + path, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }) });
+      data = await r.json();
+    } catch {
+      $("lErr").textContent = "could not reach the gateway, try again in a few seconds";
+      return;
+    } finally {
+      clearTimeout(slow); btns.forEach(b => b.disabled = false);
+    }
+    $("lErr").textContent = "";
     if (!r.ok){
       $("lErr").textContent = { email_taken: "that email is taken", weak_password: "password needs 6+ characters",
         invalid_email: "enter a valid email", bad_credentials: "wrong email or password" }[data.error] ?? "could not " + authMode;
@@ -614,7 +634,7 @@
   function setTiles(){
     if (tiles) lmap.removeLayer(tiles);
     const dark = rootEl.dataset.theme === "dark";
-    tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "light_all"}/{z}/{x}/{y}{r}.png`, { maxZoom: 18, noWrap: true }).addTo(lmap);
+    tiles = L.tileLayer(`https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${dark ? "Dark" : "Light"}_Gray_Base/MapServer/tile/{z}/{y}/{x}`, { maxZoom: 16, noWrap: true, attribution: "Tiles &copy; Esri" }).addTo(lmap);
   }
   setTiles();
   const markers = L.layerGroup().addTo(lmap);
